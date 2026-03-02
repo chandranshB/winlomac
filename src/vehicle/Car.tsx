@@ -13,13 +13,22 @@ export function Car({ isLocal, id, initialPosition, color }: { isLocal: boolean;
   // Smoothing vars for remote players
   const targetPos = useRef(new THREE.Vector3(...initialPosition));
   const targetRot = useRef(new THREE.Quaternion(0, 0, 0, 1));
+
+  // Engine & Transmission State
+  const gearRef = useRef<number>(1);
+  const rpmRef = useRef<number>(1000);
   
   // Game mechanic constants
-  const MAX_SPEED = 60;
-  const ACCELERATION = 120;
+  const MAX_SPEED = 75; // Increased top speed
+  const ACCELERATION = 140;
   const BRAKING = 150;
   const BASE_TURN_SPEED = 3.0;
   const GRIP = 0.95; // Higher = tighter turns, less drifting
+  
+  // Transmission Tuning (m/s)
+  const GEAR_SPEEDS = [15, 25, 35, 45, 55, 75]; // 6 Gears
+  const IDLE_RPM = 1000;
+  const REDLINE_RPM = 8000;
 
   useFrame((state, delta) => {
     if (!bodyRef.current || !meshRef.current) return;
@@ -35,15 +44,67 @@ export function Car({ isLocal, id, initialPosition, color }: { isLocal: boolean;
       
       const speed = new THREE.Vector3(currentVel.x, currentVel.y, currentVel.z).length();
       const forwardSpeed = new THREE.Vector3(currentVel.x, currentVel.y, currentVel.z).dot(forward);
+      const absForwardSpeed = Math.abs(forwardSpeed);
+
+      // --- Transmission Logic (Auto Shifting) ---
+      let gear = gearRef.current;
       
-      // Send speed to HUD
-      useStore.getState().updatePlayer(id, { speed: Math.abs(forwardSpeed) * 2.23694 }); // m/s to mph
+      if (forwardSpeed < -1) {
+        gear = -1; // Reverse
+      } else if (absForwardSpeed < 1 && !keys.forward) {
+        gear = 1; // Idle
+      } else {
+        // Upshift logic
+        if (absForwardSpeed > GEAR_SPEEDS[gear - 1] && gear < 6) {
+            gear++;
+        }
+        // Downshift logic
+        else if (gear > 1 && absForwardSpeed < GEAR_SPEEDS[gear - 2] * 0.8) {
+            gear--;
+        }
+      }
+      gearRef.current = gear;
 
+      // --- RPM Calculation ---
+      let rpm = IDLE_RPM;
+      if (gear === -1) { // Reverse RPM
+         rpm = IDLE_RPM + (absForwardSpeed / 15) * (REDLINE_RPM - IDLE_RPM);
+      } else { // Forward Gears RPM
+         const prevGearSpeed = gear === 1 ? 0 : GEAR_SPEEDS[gear - 2];
+         const gearRange = GEAR_SPEEDS[gear - 1] - prevGearSpeed;
+         const speedInGear = Math.max(0, absForwardSpeed - prevGearSpeed);
+         const rpmRatio = speedInGear / gearRange;
+         rpm = IDLE_RPM + rpmRatio * (REDLINE_RPM - IDLE_RPM);
+      }
+
+      // Smooth RPM visually
+      if (keys.forward) {
+          rpm = THREE.MathUtils.lerp(rpmRef.current, Math.min(rpm, REDLINE_RPM), 0.1); 
+      } else if (keys.backward) {
+          rpm = THREE.MathUtils.lerp(rpmRef.current, Math.min(rpm, REDLINE_RPM), 0.1); 
+      } else { // Idle drop
+          rpm = THREE.MathUtils.lerp(rpmRef.current, IDLE_RPM, 0.05); 
+      }
+      rpmRef.current = rpm;
+
+      // Send telemetry to HUD
+      useStore.getState().updatePlayer(id, { 
+         speed: absForwardSpeed * 2.23694, 
+         gear: gear === -1 ? 'R' : gear,
+         rpm: rpm
+      });
+
+      // --- Acceleration & Braking with Torque Curve ---
       const mass = 1200;
+      
+      // Calculate realistic acceleration torque curve multiplier
+      let torqueMultiplier = 1.0;
+      if (rpm < 4000) torqueMultiplier = 0.5 + (rpm / 4000) * 0.5; // Build up power
+      else if (rpm < 7000) torqueMultiplier = 1.0; // Peak powerband
+      else torqueMultiplier = Math.max(0.2, 1.0 - ((rpm - 7000) / 1000) * 0.8); // Power drop off near redline
 
-      // --- Acceleration & Braking ---
       if (keys.forward && forwardSpeed < MAX_SPEED) {
-         bodyRef.current.applyImpulse(forward.clone().multiplyScalar(ACCELERATION * mass * delta), true);
+         bodyRef.current.applyImpulse(forward.clone().multiplyScalar(ACCELERATION * mass * torqueMultiplier * delta), true);
       }
       if (keys.backward) {
          if (forwardSpeed > 1) { // Braking

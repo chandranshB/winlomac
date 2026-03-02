@@ -7,8 +7,10 @@ export type PlayerData = {
   position: [number, number, number];
   rotation: [number, number, number, number]; // Quaternion
   ready: boolean;
-  speed: number;
-  lap: number;
+  speed?: number;
+  gear?: number | string;
+  rpm?: number;
+  lap?: number;
   checkpoints: number;
 };
 

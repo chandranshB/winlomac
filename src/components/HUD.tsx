@@ -7,13 +7,17 @@ export default function HUD() {
   
   // Use local state for fast-updating speed to avoid fully re-rendering HUD structure 60fps globally
   const [speed, setSpeed] = useState(0);
+  const [gear, setGear] = useState<number | string>('N');
+  const [rpm, setRpm] = useState(1000);
 
   useEffect(() => {
-    // Poll the store purely for the local player's speed instead of forcing a full component subscribe array
+    // Poll the store purely for the local player's details instead of forcing a full component subscribe array
     const interval = setInterval(() => {
       const state = useStore.getState();
       if (state.peerId && state.players[state.peerId]) {
         setSpeed(Math.round(state.players[state.peerId].speed || 0));
+        setGear(state.players[state.peerId].gear || 'N');
+        setRpm(state.players[state.peerId].rpm || 1000);
       }
     }, 50); // 20fps UI update for smoother digits without CPU load
 
@@ -71,20 +75,50 @@ export default function HUD() {
         </div>
       </div>
 
-      {/* Speedometer Overlay */}
+      {/* NFS-Style Speedometer Overlay */}
       <div className="flex justify-end pr-8 pb-8">
-         <div className="bg-zinc-950/80 backdrop-blur-xl border-l-[3px] border-l-red-500 border border-zinc-800 p-6 rounded-full w-40 h-40 flex flex-col items-center justify-center shadow-[0_0_30px_rgba(0,0,0,0.5)]">
-            <span className="text-5xl font-black italic text-white tracking-tighter" style={{ textShadow: '0 0 10px rgba(255,255,255,0.3)' }}>
-              {speed}
-            </span>
-            <span className="text-xs font-bold text-zinc-500 tracking-widest uppercase mt-1">MPH</span>
+         <div className="relative bg-zinc-950/80 backdrop-blur-xl border border-zinc-800 p-8 rounded-full w-48 h-48 flex flex-col items-center justify-center shadow-[0_0_40px_rgba(0,0,0,0.6)]">
             
-            {/* Simple RPM bar visual */}
-            <div className="w-20 h-1.5 bg-zinc-800 rounded-full mt-3 overflow-hidden">
-               <div 
-                 className="h-full bg-linear-to-r from-emerald-400 via-amber-400 to-red-500 transition-all duration-75"
-                 style={{ width: `${Math.min((speed / 134) * 100, 100)}%` }}
+            {/* RPM Circular Gauge (CSS Trick) */}
+            <svg className="absolute inset-0 w-full h-full -rotate-90 pointer-events-none" viewBox="0 0 100 100">
+               <circle 
+                 cx="50" cy="50" r="46" 
+                 fill="none" 
+                 stroke="rgba(255,255,255,0.05)" 
+                 strokeWidth="4" 
                />
+               <circle 
+                 cx="50" cy="50" r="46" 
+                 fill="none" 
+                 stroke={rpm > 7000 ? "#ef4444" : "#10b981"} 
+                 strokeWidth="4" 
+                 strokeDasharray="289" // 2 * pi * r (approx)
+                 strokeDashoffset={289 - (Math.min(rpm / 8000, 1) * 289)} 
+                 className="transition-all duration-75 ease-out"
+               />
+            </svg>
+
+            {/* Speed Value */}
+            <div className="flex flex-col items-center justify-center z-10 w-full mb-1">
+              <span className="text-6xl font-black italic text-white tracking-tighter tabular-nums leading-none" style={{ textShadow: '0 0 15px rgba(255,255,255,0.4)' }}>
+                {speed}
+              </span>
+              <span className="text-[10px] font-bold text-zinc-500 tracking-widest uppercase mt-1">MPH</span>
+            </div>
+            
+            {/* Gear Indicator */}
+            <div className="absolute bottom-6 right-6 bg-zinc-900 border border-zinc-700 w-10 h-10 rounded-full flex items-center justify-center shadow-lg pointer-events-none z-20">
+              <span className={`text-xl font-bold ${gear === 'R' ? 'text-red-500' : gear === 'N' ? 'text-zinc-400' : 'text-emerald-400'}`}>
+                {gear}
+              </span>
+            </div>
+            
+            {/* Direct RPM text readout inside */}
+            <div className="absolute top-6 flex flex-col items-center pointer-events-none z-10">
+              <span className={`text-xs font-mono font-bold ${rpm > 7500 ? 'text-red-500 animate-pulse' : 'text-zinc-400'}`}>
+                {Math.round(rpm)}
+              </span>
+              <span className="text-[8px] font-bold text-zinc-600 tracking-widest uppercase">RPM</span>
             </div>
          </div>
       </div>
