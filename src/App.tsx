@@ -12,6 +12,7 @@ const keyMap: KeyboardControlsEntry<string>[] = [
   { name: 'left', keys: ['ArrowLeft', 'KeyA'] },
   { name: 'right', keys: ['ArrowRight', 'KeyD'] },
   { name: 'brake', keys: ['Space'] },
+  { name: 'reset', keys: ['KeyR'] },
 ];
 
 function App() {

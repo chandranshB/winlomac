@@ -60,18 +60,18 @@ export function Track() {
       {/* Track Barriers (Inside & Outside Walls) to keep players from falling off */}
       <group>
         {/* Start Straight Walls */}
-        <RigidBody type="fixed" colliders="cuboid" position={[-21, 0, 0]}>
+        <RigidBody type="fixed" colliders="cuboid" position={[-21, 0, 0]} friction={0} restitution={0.4}>
            <mesh><boxGeometry args={[2, 4, 200]}/><meshStandardMaterial color="#ff2222"/></mesh>
         </RigidBody>
-        <RigidBody type="fixed" colliders="cuboid" position={[21, 0, 0]}>
+        <RigidBody type="fixed" colliders="cuboid" position={[21, 0, 0]} friction={0} restitution={0.4}>
            <mesh><boxGeometry args={[2, 4, 200]}/><meshStandardMaterial color="#aaaaaa"/></mesh>
         </RigidBody>
         
         {/* Back Straight Walls */}
-        <RigidBody type="fixed" colliders="cuboid" position={[179, 0, 0]}>
+        <RigidBody type="fixed" colliders="cuboid" position={[179, 0, 0]} friction={0} restitution={0.4}>
            <mesh><boxGeometry args={[2, 4, 300]}/><meshStandardMaterial color="#ff2222"/></mesh>
         </RigidBody>
-        <RigidBody type="fixed" colliders="cuboid" position={[221, 0, 0]}>
+        <RigidBody type="fixed" colliders="cuboid" position={[221, 0, 0]} friction={0} restitution={0.4}>
            <mesh><boxGeometry args={[2, 4, 300]}/><meshStandardMaterial color="#aaaaaa"/></mesh>
         </RigidBody>
       </group>

@@ -12,6 +12,7 @@ export type PlayerData = {
   rpm?: number;
   lap?: number;
   checkpoints: number;
+  isStuck?: boolean;
 };
 
 type GameState = {

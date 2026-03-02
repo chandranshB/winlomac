@@ -1,7 +1,7 @@
 import { useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { useKeyboardControls } from '@react-three/drei';
-import { RigidBody, RapierRigidBody, CuboidCollider } from '@react-three/rapier';
+import { RigidBody, RapierRigidBody, CuboidCollider, useRapier } from '@react-three/rapier';
 import { useStore } from '../store/useStore';
 import * as THREE from 'three';
 
@@ -9,6 +9,7 @@ export function Car({ isLocal, id, initialPosition, color }: { isLocal: boolean;
   const bodyRef = useRef<RapierRigidBody>(null);
   const meshRef = useRef<THREE.Mesh>(null);
   const [, getKeys] = useKeyboardControls();
+  const { rapier, world } = useRapier(); // Required for robust physics raycasting
   
   // Smoothing vars for remote players
   const targetPos = useRef(new THREE.Vector3(...initialPosition));
@@ -18,6 +19,7 @@ export function Car({ isLocal, id, initialPosition, color }: { isLocal: boolean;
   const gearRef = useRef<number>(1);
   const rpmRef = useRef<number>(1000);
   const shiftDelayRef = useRef<number>(0); // Transmission delay for realistic feeling
+  const flipTimerRef = useRef<number>(0); 
   
   // Game mechanic constants
   const MAX_SPEED = 120; // Massive top speed
@@ -42,7 +44,24 @@ export function Car({ isLocal, id, initialPosition, color }: { isLocal: boolean;
 
       const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(quaternion);
       const right = new THREE.Vector3(1, 0, 0).applyQuaternion(quaternion);
+      const up = new THREE.Vector3(0, 1, 0).applyQuaternion(quaternion);
       
+      const pos = bodyRef.current.translation();
+      const mass = 1200;
+
+      // Robust Ground Raycast Check
+      const rayorigin = { x: pos.x, y: pos.y - 0.2, z: pos.z }; // start slightly under the car
+      const raydir = { x: 0, y: -1, z: 0 };
+      const ray = new rapier.Ray(rayorigin, raydir);
+      const hit = world.castRay(ray, 1.5, true); 
+      const isGrounded = up.y > 0.1 && hit !== null; 
+
+      // Arcade Gravity (Fixes floaty spaceship feeling)
+      if (!isGrounded) {
+         // Pull the heavy massive frame powerfully down to the road while jumping!
+         bodyRef.current.applyImpulse({ x: 0, y: -150 * mass * delta, z: 0 }, true);
+      }
+
       const speed = new THREE.Vector3(currentVel.x, currentVel.y, currentVel.z).length();
       const forwardSpeed = new THREE.Vector3(currentVel.x, currentVel.y, currentVel.z).dot(forward);
       const absForwardSpeed = Math.abs(forwardSpeed);
@@ -58,20 +77,22 @@ export function Car({ isLocal, id, initialPosition, color }: { isLocal: boolean;
       }
       
       if (!isShifting) {
-        if (forwardSpeed < -1) {
-          if (gear !== -1) { gear = -1; shiftDelayRef.current = 0.2; }
-        } else if (absForwardSpeed < 1 && !keys.forward) {
+        if (forwardSpeed < -1 && !keys.forward) {
+          if (gear !== -1) { gear = -1; shiftDelayRef.current = 0.3; }
+        } else if (gear === -1 && (keys.forward || forwardSpeed >= -1)) {
+          gear = 1; shiftDelayRef.current = 0.2;
+        } else if (absForwardSpeed < 1 && !keys.forward && !keys.backward) {
           if (gear !== 1) { gear = 1; shiftDelayRef.current = 0.1; }
-        } else {
+        } else if (gear > 0) {
           // Upshift logic (Redline reached)
-          if (absForwardSpeed > GEAR_SPEEDS[gear - 1] && gear < 6) {
+          if (absForwardSpeed >= GEAR_SPEEDS[gear - 1] && gear < 6) {
               gear++;
-              shiftDelayRef.current = 0.15; // 150ms smooth upshift
+              shiftDelayRef.current = 0.2; // 200ms smooth upshift
           }
-          // Downshift logic
-          else if (gear > 1 && absForwardSpeed < (gear === 2 ? 10 : GEAR_SPEEDS[gear - 2]) * 0.8) {
+          // Downshift logic with Hysteresis (Prevents rapid back-and-forth shifting)
+          else if (gear > 1 && absForwardSpeed < (gear === 2 ? 10 : GEAR_SPEEDS[gear - 2] * 0.8)) {
               gear--;
-              shiftDelayRef.current = 0.1; // 100ms quick downshift
+              shiftDelayRef.current = 0.15; // 150ms reliable downshift
           }
         }
       }
@@ -110,7 +131,7 @@ export function Car({ isLocal, id, initialPosition, color }: { isLocal: boolean;
       });
 
       // --- Acceleration & Braking with Torque Curve ---
-      const mass = 1200;
+      // (Mass extracted to higher scope)
       
       // Calculate realistic acceleration torque curve multiplier
       let torqueMultiplier = 1.0;
@@ -130,11 +151,11 @@ export function Car({ isLocal, id, initialPosition, color }: { isLocal: boolean;
           shiftDelayRef.current -= delta; // Push timer below -0.1 to end the jolt
       }
 
-      if (keys.forward && forwardSpeed < MAX_SPEED && torqueMultiplier > 0) {
+      if (isGrounded && keys.forward && forwardSpeed < MAX_SPEED && torqueMultiplier > 0) {
          bodyRef.current.applyImpulse(forward.clone().multiplyScalar(ACCELERATION * mass * torqueMultiplier * delta), true);
       }
       // Brakes work independently of transmission clutch logic
-      if (keys.backward) {
+      if (isGrounded && keys.backward) {
          if (forwardSpeed > 1) { // Braking
             bodyRef.current.applyImpulse(forward.clone().multiplyScalar(-BRAKING * mass * delta), true);
          } else if (forwardSpeed > -MAX_SPEED / 2) { // Reverse
@@ -148,8 +169,10 @@ export function Car({ isLocal, id, initialPosition, color }: { isLocal: boolean;
       const currentGrip = (keys.brake) ? 0.1 : GRIP; // Press space to drift (heavy loss of grip)
       
       // Apply counter impulse to sideways momentum relative to mass (1200)
-      const counterForce = right.clone().multiplyScalar(-sidewaysVelocity * mass * currentGrip * 5 * delta); 
-      bodyRef.current.applyImpulse(counterForce, true);
+      if (isGrounded) {
+         const counterForce = right.clone().multiplyScalar(-sidewaysVelocity * mass * currentGrip * 5 * delta); 
+         bodyRef.current.applyImpulse(counterForce, true);
+      }
 
       // --- Steering ---
       // Steering should be affected by how fast we are going (can't turn much if still)
@@ -157,7 +180,7 @@ export function Car({ isLocal, id, initialPosition, color }: { isLocal: boolean;
       // Reverse turning direction if going backwards
       if (forwardSpeed < -0.1) turningMultiplier *= -1;
 
-      if (speed > 1) {
+      if (isGrounded && speed > 1) {
         // Use proper physical torque for rotation to prevent collision jitter from forced setRotation
         const turnStrength = BASE_TURN_SPEED * turningMultiplier * mass * 8 * delta;
         if (keys.left) bodyRef.current.applyTorqueImpulse({ x: 0, y: turnStrength, z: 0 }, true);
@@ -167,16 +190,34 @@ export function Car({ isLocal, id, initialPosition, color }: { isLocal: boolean;
       // Fake visual tilt for drifting
       meshRef.current.rotation.z = THREE.MathUtils.lerp(meshRef.current.rotation.z, (keys.left ? 0.05 : (keys.right ? -0.05 : 0)) * turningMultiplier, 0.1);
 
-      // --- Dynamic Smooth Camera ---
-      const pos = bodyRef.current.translation();
+      // --- Dynamic Smooth Camera & Respawns ---
+      // (pos already requested at top of useFrame scope)
       
-      // Fall recovery mechanism
-      if (pos.y < -10) {
+      // Void Fall recovery mechanism
+      if (pos.y < -15) {
         bodyRef.current.setTranslation({ x: initialPosition[0], y: initialPosition[1], z: initialPosition[2] }, true);
         bodyRef.current.setLinvel({ x: 0, y: 0, z: 0 }, true);
         bodyRef.current.setAngvel({ x: 0, y: 0, z: 0 }, true);
         bodyRef.current.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
+        gearRef.current = 1;
         return;
+      }
+
+      // Flip recovery (Upside down or heavily tilted and stuck)
+      if (!isGrounded && speed < 2) {
+         flipTimerRef.current += delta;
+         if (flipTimerRef.current > 2.0) { // Stuck upside down for 2 seconds
+            // Respawn slightly higher and upright instantly in place
+            bodyRef.current.setTranslation({ x: pos.x, y: pos.y + 3, z: pos.z }, true);
+            bodyRef.current.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
+            bodyRef.current.setLinvel({ x: 0, y: 0, z: 0 }, true);
+            bodyRef.current.setAngvel({ x: 0, y: 0, z: 0 }, true);
+            flipTimerRef.current = 0;
+            gearRef.current = 1;
+            return;
+         }
+      } else {
+         flipTimerRef.current = 0;
       }
       
       // Camera pulls back on higher speeds
@@ -222,10 +263,10 @@ export function Car({ isLocal, id, initialPosition, color }: { isLocal: boolean;
 
   if (isLocal) {
     return (
-      <RigidBody ref={bodyRef} position={initialPosition} colliders={false} ccd={true} linearDamping={0.4} angularDamping={5.0} friction={0}>
-        {/* Explicit Physics Box (Half-extents of the main car hull) */}
-        <CuboidCollider args={[0.9, 0.4, 2.1]} position={[0, 0.5, 0]} mass={1200} />
-        <CuboidCollider args={[0.8, 0.3, 1.0]} position={[0, 1.1, -0.5]} mass={100} />
+      <RigidBody ref={bodyRef} position={initialPosition} colliders={false} ccd={true} linearDamping={0.4} angularDamping={5.0} friction={0.1} restitution={0.4}>
+        {/* Explicit Physics Box (Half-extents of the main car hull) added friction and anti-bouncing properties explicitly */}
+        <CuboidCollider args={[0.9, 0.4, 2.1]} position={[0, 0.5, 0]} mass={1200} friction={0.1} restitution={0.4} />
+        <CuboidCollider args={[0.8, 0.3, 1.0]} position={[0, 1.1, -0.5]} mass={100} friction={0.1} restitution={0.4} />
         
         <group ref={meshRef}>
           {/* Main Car Body */}

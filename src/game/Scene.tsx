@@ -45,25 +45,25 @@ export function GameScene() {
             <Track />
 
             {/* Arena Boundaries (Solid walls around the 500x500 plane) */}
-            <RigidBody type="fixed" position={[250, 10, 0]}>
+            <RigidBody type="fixed" position={[250, 10, 0]} friction={0} restitution={0.4}>
               <mesh receiveShadow castShadow>
                 <boxGeometry args={[4, 20, 500]} />
                 <meshStandardMaterial color="#881111" />
               </mesh>
             </RigidBody>
-            <RigidBody type="fixed" position={[-250, 10, 0]}>
+            <RigidBody type="fixed" position={[-250, 10, 0]} friction={0} restitution={0.4}>
               <mesh receiveShadow castShadow>
                 <boxGeometry args={[4, 20, 500]} />
                 <meshStandardMaterial color="#881111" />
               </mesh>
             </RigidBody>
-            <RigidBody type="fixed" position={[0, 10, 250]}>
+            <RigidBody type="fixed" position={[0, 10, 250]} friction={0} restitution={0.4}>
               <mesh receiveShadow castShadow>
                 <boxGeometry args={[500, 20, 4]} />
                 <meshStandardMaterial color="#881111" />
               </mesh>
             </RigidBody>
-            <RigidBody type="fixed" position={[0, 10, -250]}>
+            <RigidBody type="fixed" position={[0, 10, -250]} friction={0} restitution={0.4}>
               <mesh receiveShadow castShadow>
                 <boxGeometry args={[500, 20, 4]} />
                 <meshStandardMaterial color="#881111" />
