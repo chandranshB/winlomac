@@ -39,15 +39,17 @@ export function Car({ isLocal, id, initialPosition, color }: { isLocal: boolean;
       // Send speed to HUD
       useStore.getState().updatePlayer(id, { speed: Math.abs(forwardSpeed) * 2.23694 }); // m/s to mph
 
+      const mass = 1200;
+
       // --- Acceleration & Braking ---
       if (keys.forward && forwardSpeed < MAX_SPEED) {
-         bodyRef.current.applyImpulse(forward.clone().multiplyScalar(ACCELERATION * delta), true);
+         bodyRef.current.applyImpulse(forward.clone().multiplyScalar(ACCELERATION * mass * delta), true);
       }
       if (keys.backward) {
          if (forwardSpeed > 1) { // Braking
-            bodyRef.current.applyImpulse(forward.clone().multiplyScalar(-BRAKING * delta), true);
+            bodyRef.current.applyImpulse(forward.clone().multiplyScalar(-BRAKING * mass * delta), true);
          } else if (forwardSpeed > -MAX_SPEED / 2) { // Reverse
-            bodyRef.current.applyImpulse(forward.clone().multiplyScalar(-ACCELERATION * 0.5 * delta), true);
+            bodyRef.current.applyImpulse(forward.clone().multiplyScalar(-ACCELERATION * mass * 0.5 * delta), true);
          }
       }
 
@@ -57,7 +59,6 @@ export function Car({ isLocal, id, initialPosition, color }: { isLocal: boolean;
       const currentGrip = (keys.brake) ? 0.1 : GRIP; // Press space to drift (heavy loss of grip)
       
       // Apply counter impulse to sideways momentum relative to mass (1200)
-      const mass = 1200;
       const counterForce = right.clone().multiplyScalar(-sidewaysVelocity * mass * currentGrip * 5 * delta); 
       bodyRef.current.applyImpulse(counterForce, true);
 
