@@ -13,6 +13,8 @@ export type PlayerData = {
   lap?: number;
   checkpoints: number;
   isStuck?: boolean;
+  isDrifting?: boolean;
+  carModel?: string;
 };
 
 type GameState = {
@@ -23,6 +25,7 @@ type GameState = {
   lobbyId: string | null;
   playerName: string;
   playerColor: string;
+  playerCarModel: string;
   
   // Game State
   players: Record<string, PlayerData>;
@@ -32,6 +35,7 @@ type GameState = {
   setConnectionInfo: (peerId: string, isHost: boolean, lobbyId: string) => void;
   setPlayerName: (name: string) => void;
   setPlayerColor: (color: string) => void;
+  setPlayerCarModel: (model: string) => void;
   
   addPlayer: (player: PlayerData) => void;
   removePlayer: (id: string) => void;
@@ -46,6 +50,7 @@ export const useStore = create<GameState>()((set) => ({
   lobbyId: null,
   playerName: 'Racer' + Math.floor(Math.random() * 1000),
   playerColor: '#' + Math.floor(Math.random()*16777215).toString(16).padStart(6, '0'),
+  playerCarModel: 'default',
   
   players: {},
 
@@ -53,6 +58,7 @@ export const useStore = create<GameState>()((set) => ({
   setConnectionInfo: (peerId, isHost, lobbyId) => set({ peerId, isHost, lobbyId }),
   setPlayerName: (playerName) => set({ playerName }),
   setPlayerColor: (playerColor) => set({ playerColor }),
+  setPlayerCarModel: (playerCarModel) => set({ playerCarModel }),
   
   addPlayer: (player) => 
     set((state) => ({ 

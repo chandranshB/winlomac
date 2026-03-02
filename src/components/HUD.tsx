@@ -9,6 +9,7 @@ export default function HUD() {
   const [speed, setSpeed] = useState(0);
   const [gear, setGear] = useState<number | string>('N');
   const [rpm, setRpm] = useState(1000);
+  const [isStuck, setIsStuck] = useState(false);
 
   useEffect(() => {
     // Poll the store purely for the local player's details instead of forcing a full component subscribe array
@@ -18,6 +19,7 @@ export default function HUD() {
         setSpeed(Math.round(state.players[state.peerId].speed || 0));
         setGear(state.players[state.peerId].gear || 'N');
         setRpm(state.players[state.peerId].rpm || 1000);
+        setIsStuck(state.players[state.peerId].isStuck || false);
       }
     }, 50); // 20fps UI update for smoother digits without CPU load
 
@@ -74,6 +76,15 @@ export default function HUD() {
           </button>
         </div>
       </div>
+
+      {/* Stuck Respawn Prompt */}
+      {isStuck && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-50">
+           <div className="bg-red-500/20 backdrop-blur-md px-8 py-4 rounded-xl border border-red-500/50 shadow-[0_0_30px_rgba(239,68,68,0.3)] animate-pulse">
+              <span className="text-2xl font-black italic text-white tracking-widest uppercase shadow-black drop-shadow-md">Press 'R' to Respawn</span>
+           </div>
+        </div>
+      )}
 
       {/* NFS-Style Speedometer Overlay */}
       <div className="flex justify-end pr-8 pb-8">

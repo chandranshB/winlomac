@@ -2,7 +2,7 @@ import { useStore } from '../store/useStore';
 import { Play } from 'lucide-react';
 
 export default function Lobby() {
-  const { status, playerName, playerColor, setStatus } = useStore();
+  const { status, playerName, playerColor, playerCarModel, setStatus } = useStore();
 
   const handlePlaySolo = () => {
     // Generate a unique ID for single player
@@ -19,7 +19,8 @@ export default function Lobby() {
       ready: true,
       speed: 0,
       lap: 0,
-      checkpoints: 0
+      checkpoints: 0,
+      carModel: playerCarModel
     });
 
     setStatus('playing');
@@ -53,6 +54,20 @@ export default function Lobby() {
               onChange={e => useStore.getState().setPlayerColor(e.target.value)}
               className="w-full h-12 bg-zinc-950/50 border border-zinc-800 rounded-lg p-1 cursor-pointer"
             />
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-zinc-400">Vehicle Selection</label>
+            <select
+              value={playerCarModel}
+              onChange={e => useStore.getState().setPlayerCarModel(e.target.value)}
+              className="w-full bg-zinc-950/50 border border-zinc-800 rounded-lg px-4 py-3 focus:outline-none focus:border-red-500 transition-all font-medium text-white"
+            >
+              <option value="default">Default Block Car</option>
+              <option value="/models/lamborghini.glb">Lamborghini</option>
+              <option value="/models/MazdaRX-7.glb">Mazda RX-7</option>
+              <option value="/models/bmw_m3_e46.glb">BMW M3 E46</option>
+            </select>
           </div>
 
           <div className="pt-4 space-y-4">
