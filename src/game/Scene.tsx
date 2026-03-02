@@ -4,6 +4,7 @@ import { Sky } from '@react-three/drei';
 import { useStore } from '../store/useStore';
 import * as THREE from 'three';
 import { Car } from '../vehicle/Car';
+import { Track } from './Track';
 import { Suspense } from 'react';
 
 export function GameScene() {
@@ -38,18 +39,10 @@ export function GameScene() {
             {/* Ground Visuals (Separated from physics) */}
             <mesh receiveShadow rotation={[-Math.PI / 2, 0, 0]}>
               <planeGeometry args={[500, 500]} />
-              <meshStandardMaterial color="#1a1a1a" roughness={0.8} />
-              
-              {/* Track markings */}
-              <mesh position={[0, 0, 0.01]}>
-                 <planeGeometry args={[10, 500]} />
-                 <meshBasicMaterial color="#333333" />
-              </mesh>
-              <mesh position={[0, 0, 0.02]}>
-                 <planeGeometry args={[0.2, 500]} />
-                 <meshBasicMaterial color="#ffffff" />
-              </mesh>
+              <meshStandardMaterial color="#0A3311" roughness={0.9} /> {/* Made ground green like grass */}
             </mesh>
+
+            <Track />
 
             {/* Arena Boundaries (Solid walls around the 500x500 plane) */}
             <RigidBody type="fixed" position={[250, 10, 0]}>

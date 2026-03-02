@@ -17,16 +17,17 @@ export function Car({ isLocal, id, initialPosition, color }: { isLocal: boolean;
   // Engine & Transmission State
   const gearRef = useRef<number>(1);
   const rpmRef = useRef<number>(1000);
+  const shiftDelayRef = useRef<number>(0); // Transmission delay for realistic feeling
   
   // Game mechanic constants
-  const MAX_SPEED = 75; // Increased top speed
-  const ACCELERATION = 140;
-  const BRAKING = 150;
+  const MAX_SPEED = 120; // Massive top speed
+  const ACCELERATION = 250;
+  const BRAKING = 200;
   const BASE_TURN_SPEED = 3.0;
   const GRIP = 0.95; // Higher = tighter turns, less drifting
   
   // Transmission Tuning (m/s)
-  const GEAR_SPEEDS = [15, 25, 35, 45, 55, 75]; // 6 Gears
+  const GEAR_SPEEDS = [20, 40, 60, 80, 100, 120]; // 6 Gears properly spaced
   const IDLE_RPM = 1000;
   const REDLINE_RPM = 8000;
 
@@ -48,44 +49,58 @@ export function Car({ isLocal, id, initialPosition, color }: { isLocal: boolean;
 
       // --- Transmission Logic (Auto Shifting) ---
       let gear = gearRef.current;
+      let isShifting = false;
+
+      // Check if we are mid-shift
+      if (shiftDelayRef.current > 0) {
+          shiftDelayRef.current -= delta;
+          isShifting = true;
+      }
       
-      if (forwardSpeed < -1) {
-        gear = -1; // Reverse
-      } else if (absForwardSpeed < 1 && !keys.forward) {
-        gear = 1; // Idle
-      } else {
-        // Upshift logic
-        if (absForwardSpeed > GEAR_SPEEDS[gear - 1] && gear < 6) {
-            gear++;
-        }
-        // Downshift logic
-        else if (gear > 1 && absForwardSpeed < GEAR_SPEEDS[gear - 2] * 0.8) {
-            gear--;
+      if (!isShifting) {
+        if (forwardSpeed < -1) {
+          if (gear !== -1) { gear = -1; shiftDelayRef.current = 0.2; }
+        } else if (absForwardSpeed < 1 && !keys.forward) {
+          if (gear !== 1) { gear = 1; shiftDelayRef.current = 0.1; }
+        } else {
+          // Upshift logic (Redline reached)
+          if (absForwardSpeed > GEAR_SPEEDS[gear - 1] && gear < 6) {
+              gear++;
+              shiftDelayRef.current = 0.15; // 150ms smooth upshift
+          }
+          // Downshift logic
+          else if (gear > 1 && absForwardSpeed < (gear === 2 ? 10 : GEAR_SPEEDS[gear - 2]) * 0.8) {
+              gear--;
+              shiftDelayRef.current = 0.1; // 100ms quick downshift
+          }
         }
       }
       gearRef.current = gear;
 
       // --- RPM Calculation ---
-      let rpm = IDLE_RPM;
+      let targetRpm = IDLE_RPM;
       if (gear === -1) { // Reverse RPM
-         rpm = IDLE_RPM + (absForwardSpeed / 15) * (REDLINE_RPM - IDLE_RPM);
+         targetRpm = IDLE_RPM + (absForwardSpeed / 15) * (REDLINE_RPM - IDLE_RPM);
       } else { // Forward Gears RPM
          const prevGearSpeed = gear === 1 ? 0 : GEAR_SPEEDS[gear - 2];
          const gearRange = GEAR_SPEEDS[gear - 1] - prevGearSpeed;
          const speedInGear = Math.max(0, absForwardSpeed - prevGearSpeed);
-         const rpmRatio = speedInGear / gearRange;
-         rpm = IDLE_RPM + rpmRatio * (REDLINE_RPM - IDLE_RPM);
+         const rpmRatio = Math.min(speedInGear / gearRange, 1.1); // Can slightly over-rev before shift
+         targetRpm = IDLE_RPM + rpmRatio * (REDLINE_RPM - IDLE_RPM);
       }
 
       // Smooth RPM visually
-      if (keys.forward) {
-          rpm = THREE.MathUtils.lerp(rpmRef.current, Math.min(rpm, REDLINE_RPM), 0.1); 
+      if (isShifting) {
+          // RPM drops immediately as clutch is held in during shift
+          rpmRef.current = THREE.MathUtils.lerp(rpmRef.current, IDLE_RPM + 1500, 10 * delta); 
+      } else if (keys.forward) {
+          rpmRef.current = THREE.MathUtils.lerp(rpmRef.current, Math.min(targetRpm, REDLINE_RPM), 15 * delta); 
       } else if (keys.backward) {
-          rpm = THREE.MathUtils.lerp(rpmRef.current, Math.min(rpm, REDLINE_RPM), 0.1); 
+          rpmRef.current = THREE.MathUtils.lerp(rpmRef.current, Math.min(targetRpm, REDLINE_RPM), 15 * delta); 
       } else { // Idle drop
-          rpm = THREE.MathUtils.lerp(rpmRef.current, IDLE_RPM, 0.05); 
+          rpmRef.current = THREE.MathUtils.lerp(rpmRef.current, IDLE_RPM, 5 * delta); 
       }
-      rpmRef.current = rpm;
+      const rpm = rpmRef.current;
 
       // Send telemetry to HUD
       useStore.getState().updatePlayer(id, { 
@@ -103,9 +118,22 @@ export function Car({ isLocal, id, initialPosition, color }: { isLocal: boolean;
       else if (rpm < 7000) torqueMultiplier = 1.0; // Peak powerband
       else torqueMultiplier = Math.max(0.2, 1.0 - ((rpm - 7000) / 1000) * 0.8); // Power drop off near redline
 
-      if (keys.forward && forwardSpeed < MAX_SPEED) {
+      // Disconnect engine (clutch in) while shifting
+      if (isShifting) {
+          torqueMultiplier = 0; 
+          // Very slight deceleration drag
+          bodyRef.current.applyImpulse(forward.clone().multiplyScalar(-BRAKING * mass * 0.01 * delta), true);
+      } 
+      // Clutch pops: major torque kick when gear re-engages!
+      else if (shiftDelayRef.current <= 0 && shiftDelayRef.current > -0.1) {
+          if (keys.forward) torqueMultiplier *= 1.3; // Much softer, realistic snap 
+          shiftDelayRef.current -= delta; // Push timer below -0.1 to end the jolt
+      }
+
+      if (keys.forward && forwardSpeed < MAX_SPEED && torqueMultiplier > 0) {
          bodyRef.current.applyImpulse(forward.clone().multiplyScalar(ACCELERATION * mass * torqueMultiplier * delta), true);
       }
+      // Brakes work independently of transmission clutch logic
       if (keys.backward) {
          if (forwardSpeed > 1) { // Braking
             bodyRef.current.applyImpulse(forward.clone().multiplyScalar(-BRAKING * mass * delta), true);
@@ -194,7 +222,7 @@ export function Car({ isLocal, id, initialPosition, color }: { isLocal: boolean;
 
   if (isLocal) {
     return (
-      <RigidBody ref={bodyRef} position={initialPosition} colliders={false} ccd={true} linearDamping={1.5} angularDamping={5.0} friction={0}>
+      <RigidBody ref={bodyRef} position={initialPosition} colliders={false} ccd={true} linearDamping={0.4} angularDamping={5.0} friction={0}>
         {/* Explicit Physics Box (Half-extents of the main car hull) */}
         <CuboidCollider args={[0.9, 0.4, 2.1]} position={[0, 0.5, 0]} mass={1200} />
         <CuboidCollider args={[0.8, 0.3, 1.0]} position={[0, 1.1, -0.5]} mass={100} />

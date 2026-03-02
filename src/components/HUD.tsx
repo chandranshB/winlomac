@@ -80,20 +80,29 @@ export default function HUD() {
          <div className="relative bg-zinc-950/80 backdrop-blur-xl border border-zinc-800 p-8 rounded-full w-48 h-48 flex flex-col items-center justify-center shadow-[0_0_40px_rgba(0,0,0,0.6)]">
             
             {/* RPM Circular Gauge (CSS Trick) */}
-            <svg className="absolute inset-0 w-full h-full -rotate-90 pointer-events-none" viewBox="0 0 100 100">
+            <svg 
+              className="absolute inset-0 w-full h-full pointer-events-none" 
+              viewBox="0 0 100 100"
+              style={{ transform: 'rotate(135deg)' }}
+            >
+               {/* Gauge Track */}
                <circle 
                  cx="50" cy="50" r="46" 
                  fill="none" 
                  stroke="rgba(255,255,255,0.05)" 
-                 strokeWidth="4" 
+                 strokeWidth="6" 
+                 strokeDasharray="216.77 289.03"
+                 strokeLinecap="round"
                />
+               {/* Active RPM Gauge Fill */}
                <circle 
                  cx="50" cy="50" r="46" 
                  fill="none" 
                  stroke={rpm > 7000 ? "#ef4444" : "#10b981"} 
-                 strokeWidth="4" 
-                 strokeDasharray="289" // 2 * pi * r (approx)
-                 strokeDashoffset={289 - (Math.min(rpm / 8000, 1) * 289)} 
+                 strokeWidth="6" 
+                 strokeLinecap="round"
+                 strokeDasharray="216.77 289.03" // 270 degree sweep
+                 strokeDashoffset={216.77 - (Math.min(rpm / 8000, 1) * 216.77)} 
                  className="transition-all duration-75 ease-out"
                />
             </svg>
