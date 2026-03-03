@@ -9,6 +9,18 @@ useGLTF.preload('/models/lamborghini.glb');
 useGLTF.preload('/models/MazdaRX-7.glb');
 useGLTF.preload('/models/bmw_m3_e46.glb');
 
+// Game mechanic constants
+const MAX_SPEED = 120; // Massive top speed
+const ACCELERATION = 60; // Slower, more realistic acceleration speed
+const BRAKING = 200;
+const BASE_TURN_SPEED = 3.0;
+const GRIP = 0.95; // Higher = tighter turns, less drifting
+
+// Transmission Tuning (m/s)
+const GEAR_SPEEDS = [20, 40, 60, 80, 100, 120]; // 6 Gears properly spaced
+const IDLE_RPM = 1000;
+const REDLINE_RPM = 8000;
+
 export function Car({ isLocal, id, initialPosition, color }: { isLocal: boolean; id: string; initialPosition: [number, number, number]; color: string }) {
   const bodyRef = useRef<RapierRigidBody>(null);
   const meshRef = useRef<THREE.Mesh>(null);
@@ -27,18 +39,6 @@ export function Car({ isLocal, id, initialPosition, color }: { isLocal: boolean;
   const rpmRef = useRef<number>(1000);
   const shiftDelayRef = useRef<number>(0); // Transmission delay for realistic feeling
   const flipTimerRef = useRef<number>(0); 
-  
-  // Game mechanic constants
-  const MAX_SPEED = 120; // Massive top speed
-  const ACCELERATION = 60; // Slower, more realistic acceleration speed
-  const BRAKING = 200;
-  const BASE_TURN_SPEED = 3.0;
-  const GRIP = 0.95; // Higher = tighter turns, less drifting
-  
-  // Transmission Tuning (m/s)
-  const GEAR_SPEEDS = [20, 40, 60, 80, 100, 120]; // 6 Gears properly spaced
-  const IDLE_RPM = 1000;
-  const REDLINE_RPM = 8000;
 
   useFrame((state, delta) => {
     if (!bodyRef.current || !meshRef.current) return;
