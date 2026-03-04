@@ -14,7 +14,12 @@ export type PlayerData = {
   checkpoints: number;
   isStuck?: boolean;
   isDrifting?: boolean;
+  isNitro?: boolean;
+  nitroLevel?: number;
   carModel?: string;
+  mapX?: number;
+  mapY?: number;
+  mapZ?: number;
 };
 
 type GameState = {
@@ -49,8 +54,8 @@ export const useStore = create<GameState>()((set) => ({
   peerId: null,
   lobbyId: null,
   playerName: 'Racer' + Math.floor(Math.random() * 1000),
-  playerColor: '#' + Math.floor(Math.random()*16777215).toString(16).padStart(6, '0'),
-  playerCarModel: 'default',
+  playerColor: '#ffffff',
+  playerCarModel: '/models/MazdaRX-7.glb',
   
   players: {},
 

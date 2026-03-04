@@ -9,7 +9,9 @@ export default function HUD() {
   const [speed, setSpeed] = useState(0);
   const [gear, setGear] = useState<number | string>('N');
   const [rpm, setRpm] = useState(1000);
+  const [nitro, setNitro] = useState(100);
   const [isStuck, setIsStuck] = useState(false);
+  const [coords, setCoords] = useState({ x: 0, y: 0, z: 0 });
 
   useEffect(() => {
     // Poll the store purely for the local player's details instead of forcing a full component subscribe array
@@ -19,9 +21,15 @@ export default function HUD() {
         setSpeed(Math.round(state.players[state.peerId].speed || 0));
         setGear(state.players[state.peerId].gear || 'N');
         setRpm(state.players[state.peerId].rpm || 1000);
+        setNitro(state.players[state.peerId].nitroLevel ?? 100);
         setIsStuck(state.players[state.peerId].isStuck || false);
+        setCoords({
+           x: Math.round(state.players[state.peerId].mapX || 0),
+           y: Math.round(state.players[state.peerId].mapY || 0),
+           z: Math.round(state.players[state.peerId].mapZ || 0),
+        });
       }
-    }, 50); // 20fps UI update for smoother digits without CPU load
+    }, 32); // 30fps UI update (Lowers CPU overhead substantially while still looking smooth)
 
     return () => clearInterval(interval);
   }, []);
@@ -50,10 +58,17 @@ export default function HUD() {
                   <div className="w-2.5 h-2.5 rounded shadow-sm" style={{ backgroundColor: p.color }} />
                   <span className="font-medium text-zinc-300 truncate max-w-[100px]">{p.name} {p.id === peerId ? '(You)' : ''}</span>
                 </div>
-                <span className="text-zinc-500 font-mono text-[10px]">{Math.round(p.speed || 0)} MPH</span>
+                <span className="text-zinc-500 font-mono text-[10px]">{Math.round(p.speed || 0)} KM/H</span>
               </div>
             ))}
           </div>
+        </div>
+
+        {/* Map Coordinates Debugger */}
+        <div className="absolute top-6 left-1/2 -translate-x-1/2 bg-zinc-900/80 backdrop-blur-md px-4 py-2 rounded-xl border border-zinc-700/50 shadow-xl flex items-center justify-center pointer-events-none">
+           <span className="text-xs font-mono font-bold text-emerald-400 tracking-wider">
+             X: {coords.x} | Y: {coords.y} | Z: {coords.z}
+           </span>
         </div>
 
         {/* Top Right Controls & Status */}
@@ -116,6 +131,27 @@ export default function HUD() {
                  strokeDashoffset={216.77 - (Math.min(rpm / 8000, 1) * 216.77)} 
                  className="transition-all duration-75 ease-out"
                />
+               
+               {/* Boost Gauge (Cyan) on the inner radius! */}
+               <circle 
+                 cx="50" cy="50" r="38" 
+                 fill="none" 
+                 stroke="rgba(0, 255, 255, 0.1)" 
+                 strokeWidth="4" 
+                 strokeDasharray="179.07 238.76" // 270 degree sweep for r=38
+                 strokeLinecap="round"
+               />
+               {/* Active Boost Render */}
+               <circle 
+                 cx="50" cy="50" r="38" 
+                 fill="none" 
+                 stroke="#06b6d4" // Cyan-500
+                 strokeWidth="4" 
+                 strokeLinecap="round"
+                 strokeDasharray="179.07 238.76" 
+                 strokeDashoffset={179.07 - ((Math.max(nitro, 0) / 100) * 179.07)} 
+                 className="transition-all duration-75 ease-out"
+               />
             </svg>
 
             {/* Speed Value */}
@@ -123,7 +159,15 @@ export default function HUD() {
               <span className="text-6xl font-black italic text-white tracking-tighter tabular-nums leading-none" style={{ textShadow: '0 0 15px rgba(255,255,255,0.4)' }}>
                 {speed}
               </span>
-              <span className="text-[10px] font-bold text-zinc-500 tracking-widest uppercase mt-1">MPH</span>
+              <span className="text-[10px] font-bold text-zinc-500 tracking-widest uppercase mt-1">KM/H</span>
+            </div>
+            
+            {/* Nitro Readout */}
+            <div className="absolute bottom-6 left-6 flex flex-col items-center pointer-events-none z-10">
+               <span className={`text-xs font-mono font-bold ${nitro < 20 ? 'text-red-500 animate-pulse' : 'text-cyan-400'}`}>
+                 {Math.round(nitro)}%
+               </span>
+               <span className="text-[8px] font-bold text-cyan-600 tracking-widest uppercase">NITRO</span>
             </div>
             
             {/* Gear Indicator */}

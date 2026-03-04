@@ -8,9 +8,16 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
+workers/node_modules
 dist
 dist-ssr
 *.local
+
+# Large map files (stored in R2)
+public/tracks/*.glb
+public/models/toyota_fortuner_2021.glb
+public/models/2022_hyundai_i20_n_line.glb
+public/models/maruti_800_ac.glb
 
 # Editor directories and files
 .vscode/*

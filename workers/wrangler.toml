@@ -1,0 +1,13 @@
+name = "racing-game-r2"
+main = "racing-game-r2.ts"
+compatibility_date = "2024-01-01"
+
+# R2 bucket binding
+[[r2_buckets]]
+binding = "RACING_GAME_BUCKET"
+bucket_name = "racing-game"
+
+# Routes (update with your domain)
+# routes = [
+#   { pattern = "racing-game.YOUR_ACCOUNT.workers.dev/*", zone_name = "YOUR_DOMAIN.com" }
+# ]

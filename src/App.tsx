@@ -4,6 +4,7 @@ import { useStore } from './store/useStore';
 import { GameScene } from './game/Scene';
 import Lobby from './components/Lobby';
 import HUD from './components/HUD';
+import LoadingScreen from './components/LoadingScreen';
 
 // Define the keys globally for the controller mappings
 const keyMap: KeyboardControlsEntry<string>[] = [
@@ -12,6 +13,7 @@ const keyMap: KeyboardControlsEntry<string>[] = [
   { name: 'left', keys: ['ArrowLeft', 'KeyA'] },
   { name: 'right', keys: ['ArrowRight', 'KeyD'] },
   { name: 'brake', keys: ['Space'] },
+  { name: 'nitro', keys: ['ShiftLeft', 'ShiftRight'] },
   { name: 'reset', keys: ['KeyR'] },
 ];
 
@@ -26,6 +28,9 @@ function App() {
 
         {/* Live HUD (Only visible when connected/playing) */}
         {status === 'playing' && <HUD />}
+
+        {/* Global Loading Screen Overlay (Displays while GLTF/Assets are downloading into React Three Fiber) */}
+        {status === 'playing' && <LoadingScreen />}
 
         {/* Continuous 3D Canvas rendering under UI layers */}
         {status === 'playing' && <GameScene />}

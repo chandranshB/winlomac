@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { DriftControllerImpl } from '../DriftController';
 import { defaultVehicleConfig } from '../../config/defaultVehicleConfig';
-import type { VehicleInput, Vector3 } from '../../types';
+import type { VehicleInput } from '../../types';
+import type { Vector3 } from '@react-three/fiber';
 
 describe('DriftController - Entry and Exit Logic', () => {
   let driftController: DriftControllerImpl;
@@ -32,7 +33,7 @@ describe('DriftController - Entry and Exit Logic', () => {
 
     it('should not enter drift when speed is below threshold', () => {
       const input = createInput(0.8, 0.6, false);
-      const speed = 25; // Below threshold (35 * 0.8 = 28 km/h)
+      const speed = 30; // Below threshold (40 km/h)
       const slipAngle = 20;
 
       const result = driftController.shouldEnterDrift(input, speed, slipAngle);
@@ -40,7 +41,7 @@ describe('DriftController - Entry and Exit Logic', () => {
     });
 
     it('should not enter drift when steering angle is too small', () => {
-      const input = createInput(0.8, 0.25, false); // Steering angle = 0.25 * 45 = 11.25 degrees (below 18 * 0.75 = 13.5)
+      const input = createInput(0.8, 0.3, false); // Steering angle = 0.3 * 45 = 13.5 degrees
       const speed = 60;
       const slipAngle = 20;
 
@@ -49,7 +50,7 @@ describe('DriftController - Entry and Exit Logic', () => {
     });
 
     it('should not enter drift when throttle is too low and no handbrake', () => {
-      const input = createInput(0.15, 0.6, false); // Low throttle (below 0.2)
+      const input = createInput(0.2, 0.6, false); // Low throttle
       const speed = 60;
       const slipAngle = 20;
 
@@ -69,7 +70,7 @@ describe('DriftController - Entry and Exit Logic', () => {
     it('should not enter drift when slip angle is too small', () => {
       const input = createInput(0.8, 0.6, false);
       const speed = 60;
-      const slipAngle = 7; // Below min slip angle (12 * 0.7 = 8.4 degrees)
+      const slipAngle = 10; // Below min slip angle (15 degrees)
 
       const result = driftController.shouldEnterDrift(input, speed, slipAngle);
       expect(result).toBe(false);
@@ -86,9 +87,9 @@ describe('DriftController - Entry and Exit Logic', () => {
   });
 
   describe('shouldExitDrift', () => {
-    it('should exit drift when speed drops below 18 km/h', () => {
+    it('should exit drift when speed drops below 20 km/h', () => {
       const input = createInput(0.8, 0.6, false);
-      const speed = 14; // Below 16 km/h
+      const speed = 15; // Below 20 km/h
       const slipAngle = 25;
 
       const result = driftController.shouldExitDrift(input, speed, slipAngle);
@@ -96,18 +97,17 @@ describe('DriftController - Entry and Exit Logic', () => {
     });
 
     it('should exit drift when steering straightens', () => {
-      const input = createInput(0.8, 0.10, false); // Steering angle = 0.10 * 45 = 4.5 degrees
+      const input = createInput(0.8, 0.2, false); // Steering angle = 0.2 * 45 = 9 degrees
       const speed = 60;
       const slipAngle = 25;
 
-      // Entry threshold is 18 degrees, exit is 30% of that = 5.4 degrees
-      // 4.5 degrees is below the exit threshold
+      // Entry threshold is 20 degrees, exit is 50% of that = 10 degrees
       const result = driftController.shouldExitDrift(input, speed, slipAngle);
       expect(result).toBe(true);
     });
 
     it('should exit drift when throttle is released without handbrake', () => {
-      const input = createInput(0.03, 0.6, false); // Very low throttle (below 0.05)
+      const input = createInput(0.05, 0.6, false); // Very low throttle
       const speed = 60;
       const slipAngle = 25;
 
@@ -238,12 +238,10 @@ describe('DriftController - Entry and Exit Logic', () => {
 
       const result = driftController.update(0.016, input, velocity, angularVelocity, speed, true);
 
-      // If drifting, grip should be reduced (with possible bonus based on slip angle)
+      // If drifting, grip should be reduced
       if (result.isDrifting) {
-        const baseGrip = 1.0 - defaultVehicleConfig.drift.gripReduction;
-        // Grip can be higher than base due to slip angle bonus (up to 15% at high angles)
-        expect(result.gripMultiplier).toBeGreaterThanOrEqual(baseGrip - 0.01); // Allow small tolerance
-        expect(result.gripMultiplier).toBeLessThanOrEqual(1.0);
+        const expectedGrip = 1.0 - defaultVehicleConfig.drift.gripReduction;
+        expect(result.gripMultiplier).toBeCloseTo(expectedGrip, 2);
       } else {
         // If not drifting, grip should be full
         expect(result.gripMultiplier).toBe(1.0);
@@ -304,7 +302,7 @@ describe('DriftController - Entry and Exit Logic', () => {
 
   describe('Counter-Steering and Slip Angle Bounds', () => {
     it('should calculate counter-steering torque proportional to slip angle', () => {
-      const slipAngle = 25; // degrees (below 30, so no scaling bonus)
+      const slipAngle = 30; // degrees
       const counterSteer = driftController.calculateCounterSteer(slipAngle);
       
       // Counter-steer should be proportional to slip angle

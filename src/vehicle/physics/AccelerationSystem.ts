@@ -1,5 +1,5 @@
-import type { AccelerationSystem, VehicleConfig, VehicleInput, ForceApplication, Vector3 } from '../types';
-import { fastTorqueLookup } from './OptimizedCurveLookup';
+import type { Vector3 } from '@react-three/fiber';
+import type { AccelerationSystem, VehicleConfig, VehicleInput, ForceApplication } from '../types';
 
 export class AccelerationSystemImpl implements AccelerationSystem {
   private _currentGear: number = 1;
@@ -34,24 +34,6 @@ export class AccelerationSystemImpl implements AccelerationSystem {
     speed: number,
     isGrounded: boolean
   ): ForceApplication {
-    // Validate inputs
-    if (!isFinite(delta) || delta <= 0 || delta > 1) {
-      console.warn('AccelerationSystem: Invalid delta, using fallback');
-      delta = 1/60; // Fallback to 60 FPS
-    }
-    
-    if (!isFinite(rpm) || rpm < 0) {
-      rpm = this.config.engine.idleRPM;
-    }
-    
-    if (!isFinite(speed)) {
-      speed = 0;
-    }
-    
-    // Clamp input values to valid ranges
-    const throttle = Math.max(0, Math.min(1, input.throttle || 0));
-    const brake = Math.max(0, Math.min(1, input.brake || 0));
-
     // Update shift timer
     if (this._isShifting) {
       this.shiftTimer += delta;
@@ -79,108 +61,36 @@ export class AccelerationSystemImpl implements AccelerationSystem {
     const point = { x: 0, y: 0, z: 0 } as Vector3;
 
     // Only apply force if grounded and not shifting
-    if (isGrounded && !this._isShifting) {
-      // Handle throttle (forward) input
-      if (throttle > 0) {
-        // Calculate engine torque
-        const engineTorque = this._torqueMultiplier * this.config.acceleration * throttle;
-        
-        // Calculate weight transfer during acceleration
-        // Weight transfers to rear wheels during acceleration, increasing rear grip
-        const weightTransfer = this.calculateWeightTransfer(engineTorque);
-        
-        // Calculate available tire grip (base grip + weight transfer bonus)
-        // Weight transfer increases rear grip by 15-25% during acceleration
-        const weightTransferBonus = weightTransfer.rear / (this.config.mass * 9.81 / 2); // Normalize to percentage
-        const gripMultiplier = 1.0 + Math.min(0.25, Math.max(0.15, weightTransferBonus * 0.2)); // 15-25% increase
-        
-        // Progressive throttle response curve for better control
-        // Gentle at low throttle, aggressive at high throttle
-        const throttleCurve = Math.pow(throttle, 0.9); // Slightly progressive
-        
-        // Simulate wheel spin on low-grip surfaces when throttle > 70%
-        let wheelSpinReduction = 1.0;
-        if (throttle > 0.7) {
-          // On low-grip surfaces, excessive throttle causes wheel spin
-          // Reduce effective force when spinning
-          const excessThrottle = (throttle - 0.7) / 0.3; // 0-1 range above 70%
-          wheelSpinReduction = 1.0 - (excessThrottle * 0.35); // Up to 35% reduction from wheel spin (reduced from 40%)
-        }
-        
-        // Speed-dependent power scaling for realistic acceleration curve
-        // Cars accelerate faster at low speeds, slower at high speeds
-        let speedPowerFactor = 1.0;
-        
-        // Hard limit check to definitively prevent exceeding maxSpeed
-        if (speed >= this.config.maxSpeed) {
-           speedPowerFactor = 0.0; // Complete power cut when max speed is reached
-        } else if (speed > this.config.maxSpeed * 0.4) {
-          // Above 40% of max speed, gradually reduce acceleration
-          const excessSpeedRatio = (speed - (this.config.maxSpeed * 0.4)) / (this.config.maxSpeed * 0.6);
-          // Scale down to 0% power gracefully as it hits maxSpeed
-          speedPowerFactor = 1.0 - Math.min(excessSpeedRatio, 1.0); 
-        }
-        
-        // Apply wheel torque proportional to tire grip and weight transfer
-        const effectiveTorque = engineTorque * gripMultiplier * wheelSpinReduction * throttleCurve * speedPowerFactor;
-        
-        // Apply force in forward direction (negative Z in Three.js)
-        // Increased multiplier from 100 to 110 for better acceleration
-        (force as { x: number; y: number; z: number }).z = -effectiveTorque * this.config.mass * 110;
-        
-        // Apply at rear axle for weight transfer simulation
-        (point as { x: number; y: number; z: number }).z = -this.config.dimensions.length * 0.3; // 30% back from center
+    if (isGrounded && !this._isShifting && input.throttle > 0) {
+      // Calculate engine torque
+      const engineTorque = this._torqueMultiplier * this.config.acceleration * input.throttle;
+      
+      // Calculate weight transfer during acceleration
+      // Weight transfers to rear wheels during acceleration, increasing rear grip
+      const weightTransfer = this.calculateWeightTransfer(engineTorque);
+      
+      // Calculate available tire grip (base grip + weight transfer bonus)
+      // Weight transfer increases rear grip by 15-25% during acceleration
+      const weightTransferBonus = weightTransfer.rear / (this.config.mass * 9.81 / 2); // Normalize to percentage
+      const gripMultiplier = 1.0 + Math.min(0.25, Math.max(0.15, weightTransferBonus * 0.2)); // 15-25% increase
+      
+      // Simulate wheel spin on low-grip surfaces when throttle > 70%
+      let wheelSpinReduction = 1.0;
+      if (input.throttle > 0.7) {
+        // On low-grip surfaces, excessive throttle causes wheel spin
+        // Reduce effective force when spinning
+        const excessThrottle = (input.throttle - 0.7) / 0.3; // 0-1 range above 70%
+        wheelSpinReduction = 1.0 - (excessThrottle * 0.4); // Up to 40% reduction from wheel spin
       }
-      // Handle brake (reverse) input with realistic behavior
-      else if (brake > 0) {
-        // Determine if we're moving forward or backward
-        const isMovingForward = speed > 0.5;
-        const isMovingBackward = speed < -0.5;
-        const isNearlyStationary = Math.abs(speed) <= 0.5;
-        
-        if (isMovingForward) {
-          // Apply progressive braking force when moving forward
-          // Braking is more effective at higher speeds (like real brakes)
-          const speedFactor = Math.min(speed / 50, 1.0); // Normalize to 0-1
-          
-          // Progressive brake input curve for better control
-          const brakeCurve = Math.pow(brake, 0.85); // Slightly progressive
-          
-          const baseBrakingForce = brakeCurve * this.config.braking * this.config.mass * 900; // Increased from 800
-          const progressiveBraking = baseBrakingForce * (0.6 + speedFactor * 0.4); // 60-100% based on speed (improved from 50-100%)
-          
-          // Apply force opposite to movement direction (positive Z to slow down)
-          const clampedBrakingForce = Math.min(progressiveBraking, this.config.mass * 6000); // Increased from 5000
-          (force as { x: number; y: number; z: number }).z = clampedBrakingForce;
-        }
-        else if (isNearlyStationary || isMovingBackward) {
-          // Reverse gear engaged - realistic reverse behavior
-          // Real cars have lower reverse gear ratio and limited power
-          // Reverse is typically 20-35% of first gear power
-          const reversePowerRatio = 0.25;
-          
-          // Calculate reverse torque with realistic gear ratio
-          const reverseTorque = this._torqueMultiplier * this.config.acceleration * brake * reversePowerRatio;
-          
-          // Apply speed limiter for reverse (typically 25-40 km/h max)
-          const maxReverseSpeed = 35; // km/h
-          let speedLimiter = 1.0;
-          if (Math.abs(speed) > maxReverseSpeed * 0.8) {
-            // Gradually reduce power as approaching max reverse speed
-            speedLimiter = Math.max(0, 1.0 - (Math.abs(speed) - maxReverseSpeed * 0.8) / (maxReverseSpeed * 0.2));
-          }
-          
-          // Apply force in reverse direction (positive Z in Three.js)
-          const reverseForce = reverseTorque * this.config.mass * 25 * speedLimiter;
-          
-          // Clamp reverse force for stability
-          const clampedReverseForce = Math.min(reverseForce, this.config.mass * 2500);
-          (force as { x: number; y: number; z: number }).z = clampedReverseForce;
-          
-          // Apply at rear axle for realistic weight distribution
-          (point as { x: number; y: number; z: number }).z = -this.config.dimensions.length * 0.3;
-        }
-      }
+      
+      // Apply wheel torque proportional to tire grip and weight transfer
+      const effectiveTorque = engineTorque * gripMultiplier * wheelSpinReduction;
+      
+      // Apply force in forward direction (negative Z in Three.js)
+      (force as { x: number; y: number; z: number }).z = -effectiveTorque * this.config.mass * 10; // Scale by mass and constant
+      
+      // Apply at rear axle for weight transfer simulation
+      (point as { x: number; y: number; z: number }).z = -this.config.dimensions.length * 0.3; // 30% back from center
     }
 
     return {
@@ -214,8 +124,28 @@ export class AccelerationSystemImpl implements AccelerationSystem {
   }
 
   calculateTorque(rpm: number): number {
-    // Use optimized binary search lookup instead of linear search
-    return fastTorqueLookup(rpm, this.config.engine.torqueCurve);
+    const curve = this.config.engine.torqueCurve;
+    const len = curve.length;
+
+    // Early exit for boundary cases
+    if (rpm <= curve[0].rpm) return curve[0].torqueMultiplier;
+    if (rpm >= curve[len - 1].rpm) return curve[len - 1].torqueMultiplier;
+
+    // Find surrounding points in curve
+    let lowerPoint = curve[0];
+    let upperPoint = curve[len - 1];
+
+    for (let i = 0; i < len - 1; i++) {
+      if (rpm >= curve[i].rpm && rpm <= curve[i + 1].rpm) {
+        lowerPoint = curve[i];
+        upperPoint = curve[i + 1];
+        break;
+      }
+    }
+
+    // Linear interpolation
+    const t = (rpm - lowerPoint.rpm) / (upperPoint.rpm - lowerPoint.rpm);
+    return lowerPoint.torqueMultiplier + t * (upperPoint.torqueMultiplier - lowerPoint.torqueMultiplier);
   }
 
   shouldShift(speed: number, rpm: number): number | null {
@@ -248,9 +178,6 @@ export class AccelerationSystemImpl implements AccelerationSystem {
         }
       }
     }
-
-    // Force neutral when completely stopped and not applying throttle/brake
-    if (absSpeed < 0.5) return 1;
 
     return null;
   }

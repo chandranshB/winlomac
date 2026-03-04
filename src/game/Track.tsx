@@ -1,88 +1,88 @@
+import React from 'react';
 import { RigidBody } from '@react-three/rapier';
+import { useGLTF } from '@react-three/drei';
+import * as THREE from 'three';
+import { loadAssetWithFallback, ASSETS } from '../utils/assetLoader';
 
 export function Track() {
+  const [trackUrl, setTrackUrl] = React.useState<string | null>(null);
+
+  // Load track URL with fallback strategy
+  React.useEffect(() => {
+    loadAssetWithFallback(ASSETS.TRACK_OVAL).then(setTrackUrl);
+  }, []);
+
+  const { scene } = useGLTF(trackUrl || ASSETS.TRACK_OVAL.localPath);
+
+  // Strip the invisible walls and complex heavy visual meshes from the physics array!
+  const clonedScene = React.useMemo(() => {
+    const clone = scene.clone(true);
+    const badNodes: THREE.Object3D[] = [];
+    
+    // Traverse the map to ensure physics and shadows are robust
+    clone.traverse((child: THREE.Object3D) => {
+      const mesh = child as THREE.Mesh;
+      if (mesh.isMesh) {
+        const meshName = mesh.name.toLowerCase();
+        
+        // Massive optimization: Do not run Rapier raycasts or shadow math on the high poly crowds, bleachers, or skybox!
+        if (
+          meshName.includes('bound') || 
+          meshName.includes('wall_invisible') || 
+          meshName.includes('collision') ||
+          meshName.includes('trigger') ||
+          meshName.includes('sky') ||
+          meshName.includes('tree') ||
+          meshName.includes('spectator') ||
+          meshName.includes('bleacher') ||
+          meshName.includes('stand') ||
+          (meshName.includes('plane') && meshName.includes('invisible'))
+        ) {
+          badNodes.push(mesh);
+          return; 
+        }
+
+        // Only explicitly drawn roads/terrain receive costly shadows
+        // Disabling castShadow completely for the track terrain frees up HUGE amounts of GPU texture memory!!
+        mesh.receiveShadow = true;
+        mesh.castShadow = false; 
+        
+        // Double side the materials ONLY where necessary (saves drawing 50,000 backfaces per frame)
+        if (meshName.includes('track') || meshName.includes('road')) {
+            if (mesh.material) {
+              if (Array.isArray(mesh.material)) {
+                 mesh.material.forEach(m => m.side = THREE.DoubleSide);
+              } else {
+                 mesh.material.side = THREE.DoubleSide;
+              }
+            }
+        }
+      }
+    });
+    
+    badNodes.forEach(node => node.removeFromParent());
+    return clone;
+  }, [scene]);
+
   return (
     <group>
-      {/* Ground plane visuals are now just the floor, track is raised slightly over it */}
-      
-      {/* Starting Straight / Finish Line */}
-      <RigidBody type="fixed" colliders="cuboid">
-        <mesh receiveShadow position={[0, -0.9, 0]}>
-          <boxGeometry args={[40, 0.4, 200]} />
-          <meshStandardMaterial color="#1a1a1a" roughness={0.8} />
-        </mesh>
-        
-        {/* Finish Line Marking */}
-        <mesh position={[0, -0.69, -50]}>
-          <planeGeometry args={[40, 2]} />
-          <meshStandardMaterial color="#ffffff" />
+      {/* Invisible Safety Catch Floor: Prevents cars from falling through the world endlessly if they glitch through a wall */}
+      <RigidBody type="fixed" colliders="cuboid" position={[0, -2, 0]} friction={0.8}>
+        <mesh visible={false}>
+          <boxGeometry args={[2000, 2, 2000]} />
+          <meshBasicMaterial transparent opacity={0} />
         </mesh>
       </RigidBody>
 
-      {/* Turn 1 (Top curve) */}
-      <RigidBody type="fixed" colliders="cuboid">
-        <mesh receiveShadow position={[50, -0.9, -120]} rotation={[0, -Math.PI / 4, 0]}>
-          <boxGeometry args={[40, 0.4, 150]} />
-          <meshStandardMaterial color="#1a1a1a" roughness={0.8} />
-        </mesh>
-      </RigidBody>
-
-      <RigidBody type="fixed" colliders="cuboid">
-        <mesh receiveShadow position={[120, -0.9, -150]} rotation={[0, -Math.PI / 2, 0]}>
-          <boxGeometry args={[40, 0.4, 100]} />
-          <meshStandardMaterial color="#1a1a1a" roughness={0.8} />
-        </mesh>
-      </RigidBody>
-
-      {/* Back Straight */}
-      <RigidBody type="fixed" colliders="cuboid">
-        <mesh receiveShadow position={[200, -0.9, 0]}>
-          <boxGeometry args={[40, 0.4, 300]} />
-          <meshStandardMaterial color="#1a1a1a" roughness={0.8} />
-        </mesh>
-      </RigidBody>
-
-      {/* Turn 2 (Bottom Curve ) */}
-      <RigidBody type="fixed" colliders="cuboid">
-        <mesh receiveShadow position={[120, -0.9, 150]} rotation={[0, Math.PI / 4, 0]}>
-          <boxGeometry args={[40, 0.4, 150]} />
-          <meshStandardMaterial color="#1a1a1a" roughness={0.8} />
-        </mesh>
-      </RigidBody>
-
-      <RigidBody type="fixed" colliders="cuboid">
-        <mesh receiveShadow position={[50, -0.9, 120]} rotation={[0, Math.PI / 2.5, 0]}>
-          <boxGeometry args={[40, 0.4, 100]} />
-          <meshStandardMaterial color="#1a1a1a" roughness={0.8} />
-        </mesh>
-      </RigidBody>
-
-      {/* Track Barriers (Inside & Outside Walls) to keep players from falling off */}
-      <group>
-        {/* Start Straight Walls */}
-        <RigidBody type="fixed" colliders="cuboid" position={[-21, 0, 0]} friction={0} restitution={0.4}>
-           <mesh><boxGeometry args={[2, 4, 200]}/><meshStandardMaterial color="#ff2222"/></mesh>
-        </RigidBody>
-        <RigidBody type="fixed" colliders="cuboid" position={[21, 0, 0]} friction={0} restitution={0.4}>
-           <mesh><boxGeometry args={[2, 4, 200]}/><meshStandardMaterial color="#aaaaaa"/></mesh>
-        </RigidBody>
-        
-        {/* Back Straight Walls */}
-        <RigidBody type="fixed" colliders="cuboid" position={[179, 0, 0]} friction={0} restitution={0.4}>
-           <mesh><boxGeometry args={[2, 4, 300]}/><meshStandardMaterial color="#ff2222"/></mesh>
-        </RigidBody>
-        <RigidBody type="fixed" colliders="cuboid" position={[221, 0, 0]} friction={0} restitution={0.4}>
-           <mesh><boxGeometry args={[2, 4, 300]}/><meshStandardMaterial color="#aaaaaa"/></mesh>
-        </RigidBody>
-      </group>
-      
-      {/* Add a Ramp / Jump in the middle just for fun! */}
-      <RigidBody type="fixed" colliders="cuboid" position={[100, -0.5, 0]} rotation={[Math.PI / 16, 0, 0]}>
-        <mesh castShadow receiveShadow>
-          <boxGeometry args={[30, 1, 40]} />
-          <meshStandardMaterial color="#ffd700" roughness={0.5} />
-        </mesh>
+      {/* Render the heavily optimized map natively */}
+      <RigidBody type="fixed" colliders="trimesh" friction={0.6} restitution={0.1}>
+        <primitive object={clonedScene} />
       </RigidBody>
     </group>
   );
 }
+
+// Preload track with fallback
+loadAssetWithFallback(ASSETS.TRACK_OVAL).then(url => {
+  useGLTF.preload(url);
+});

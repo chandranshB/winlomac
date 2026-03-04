@@ -1,5 +1,4 @@
 import type { TireModel, VehicleConfig, GripCurvePoint } from '../types';
-import { fastGripLookup } from './OptimizedCurveLookup';
 
 export class TireModelImpl implements TireModel {
   private config: VehicleConfig;
@@ -10,7 +9,7 @@ export class TireModelImpl implements TireModel {
 
   /**
    * Get grip coefficient based on slip angle and drift state
-   * Uses optimized binary search interpolation between grip curve points
+   * Uses interpolation between grip curve points
    * 
    * @param slipAngle - Slip angle in degrees
    * @param isDrifting - Whether the vehicle is in drift state
@@ -21,8 +20,35 @@ export class TireModelImpl implements TireModel {
       ? this.config.tires.driftGripCurve 
       : this.config.tires.lateralGripCurve;
     
-    // Use optimized binary search lookup instead of linear search
-    return fastGripLookup(slipAngle, curve);
+    const absSlipAngle = Math.abs(slipAngle);
+    
+    // Find surrounding points in the curve
+    let lowerPoint: GripCurvePoint = curve[0];
+    let upperPoint: GripCurvePoint = curve[curve.length - 1];
+    
+    // Handle edge cases
+    if (absSlipAngle <= curve[0].slipAngle) {
+      return curve[0].gripPercent;
+    }
+    if (absSlipAngle >= curve[curve.length - 1].slipAngle) {
+      return curve[curve.length - 1].gripPercent;
+    }
+    
+    // Find the two points to interpolate between
+    for (let i = 0; i < curve.length - 1; i++) {
+      if (absSlipAngle >= curve[i].slipAngle && 
+          absSlipAngle <= curve[i + 1].slipAngle) {
+        lowerPoint = curve[i];
+        upperPoint = curve[i + 1];
+        break;
+      }
+    }
+    
+    // Linear interpolation
+    const t = (absSlipAngle - lowerPoint.slipAngle) / 
+              (upperPoint.slipAngle - lowerPoint.slipAngle);
+    return lowerPoint.gripPercent + 
+           t * (upperPoint.gripPercent - lowerPoint.gripPercent);
   }
 
   /**
