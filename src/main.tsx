@@ -2,6 +2,10 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import './index.css';
 import App from './App.tsx';
+import { initializeSecurity } from './utils/security';
+
+// Initialize anti-cheat and security measures
+initializeSecurity();
 
 // Suppress three.js r183+ deprecation warnings about THREE.Clock that come from @react-three/fiber internally
 const originalWarn = console.warn;

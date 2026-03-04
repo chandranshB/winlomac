@@ -1,21 +1,28 @@
-import React from 'react';
+import React, { useMemo, useState } from 'react';
 import { RigidBody } from '@react-three/rapier';
 import { useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
 import { loadAssetWithFallback, ASSETS } from '../utils/assetLoader';
 
 export function Track() {
-  const [trackUrl, setTrackUrl] = React.useState<string | null>(null);
+  const [trackUrl, setTrackUrl] = useState<string>(ASSETS.TRACK_OVAL.localPath);
 
   // Load track URL with fallback strategy
   React.useEffect(() => {
-    loadAssetWithFallback(ASSETS.TRACK_OVAL).then(setTrackUrl);
+    loadAssetWithFallback(ASSETS.TRACK_OVAL)
+      .then(setTrackUrl)
+      .catch(err => {
+        console.error('[Track] Failed to load track:', err);
+        // Keep using local path as fallback
+      });
   }, []);
 
-  const { scene } = useGLTF(trackUrl || ASSETS.TRACK_OVAL.localPath);
+  const { scene } = useGLTF(trackUrl);
 
   // Strip the invisible walls and complex heavy visual meshes from the physics array!
-  const clonedScene = React.useMemo(() => {
+  const clonedScene = useMemo(() => {
+    if (!scene) return null;
+    
     const clone = scene.clone(true);
     const badNodes: THREE.Object3D[] = [];
     
@@ -47,13 +54,25 @@ export function Track() {
         mesh.receiveShadow = true;
         mesh.castShadow = false; 
         
+        // Frustum culling optimization
+        mesh.frustumCulled = true;
+        
         // Double side the materials ONLY where necessary (saves drawing 50,000 backfaces per frame)
         if (meshName.includes('track') || meshName.includes('road')) {
             if (mesh.material) {
               if (Array.isArray(mesh.material)) {
-                 mesh.material.forEach(m => m.side = THREE.DoubleSide);
+                 mesh.material.forEach(m => {
+                   m.side = THREE.DoubleSide;
+                   // Optimize material for performance
+                   if (m instanceof THREE.MeshStandardMaterial) {
+                     m.needsUpdate = false;
+                   }
+                 });
               } else {
                  mesh.material.side = THREE.DoubleSide;
+                 if (mesh.material instanceof THREE.MeshStandardMaterial) {
+                   mesh.material.needsUpdate = false;
+                 }
               }
             }
         }
@@ -63,6 +82,9 @@ export function Track() {
     badNodes.forEach(node => node.removeFromParent());
     return clone;
   }, [scene]);
+
+  // Don't render if scene isn't ready
+  if (!clonedScene) return null;
 
   return (
     <group>
@@ -74,15 +96,22 @@ export function Track() {
         </mesh>
       </RigidBody>
 
-      {/* Render the heavily optimized map natively */}
-      <RigidBody type="fixed" colliders="trimesh" friction={0.6} restitution={0.1}>
+      {/* Render the heavily optimized map natively - using hull instead of trimesh for MUCH faster physics */}
+      <RigidBody 
+        type="fixed" 
+        colliders="hull" 
+        friction={0.6} 
+        restitution={0.1}
+      >
         <primitive object={clonedScene} />
       </RigidBody>
     </group>
   );
 }
 
-// Preload track with fallback
+// Preload track with fallback - start loading immediately
 loadAssetWithFallback(ASSETS.TRACK_OVAL).then(url => {
   useGLTF.preload(url);
+}).catch(err => {
+  console.error('[Track] Failed to preload:', err);
 });

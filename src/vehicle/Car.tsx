@@ -4,6 +4,7 @@ import { useKeyboardControls, useGLTF } from '@react-three/drei';
 import { RigidBody, RapierRigidBody, CuboidCollider, RoundCuboidCollider, useRapier } from '@react-three/rapier';
 import { useStore } from '../store/useStore';
 import * as THREE from 'three';
+import { getGameConstants } from '../utils/security';
 
 useGLTF.preload('/models/1994 Nissan 180MX.glb');
 useGLTF.preload('/models/2022_hyundai_i20_n_line.glb');
@@ -18,17 +19,16 @@ useGLTF.preload('/models/lamborghini.glb');
 useGLTF.preload('/models/maruti_800_ac.glb');
 useGLTF.preload('/models/toyota_fortuner_2021.glb');
 
-// Game mechanic constants
-const MAX_SPEED = 90; // Tuned for optimal track racing feel without feeling sluggish
-const ACCELERATION = 25; // Pulled back slightly so we don't peel out of corners and for better control
-const BRAKING = 140; // Balanced brake resistance
-const BASE_TURN_SPEED = 3.0;
-const GRIP = 0.95; // Higher = tighter turns, less drifting
-
-// Transmission Tuning (m/s)
-const GEAR_SPEEDS = [15, 30, 45, 60, 75, 90]; // Smooth RPM ramping through the 90 m/s range
-const IDLE_RPM = 1000;
-const REDLINE_RPM = 8000;
+// Get protected game constants
+const CONSTANTS = getGameConstants();
+const MAX_SPEED = CONSTANTS.MAX_SPEED;
+const ACCELERATION = CONSTANTS.ACCELERATION;
+const BRAKING = CONSTANTS.BRAKING;
+const BASE_TURN_SPEED = CONSTANTS.BASE_TURN_SPEED;
+const GRIP = CONSTANTS.GRIP;
+const GEAR_SPEEDS = CONSTANTS.GEAR_SPEEDS;
+const IDLE_RPM = CONSTANTS.IDLE_RPM;
+const REDLINE_RPM = CONSTANTS.REDLINE_RPM;
 
 const _quaternion = new THREE.Quaternion();
 const _forward = new THREE.Vector3(0, 0, -1);
@@ -62,12 +62,44 @@ export function Car({ isLocal, id, initialPosition, initialRotation, color }: { 
   const nitroCooldownRef = useRef<boolean>(false);
   const rpmRef = useRef<number>(1000);
   const shiftDelayRef = useRef<number>(0); // Transmission delay for realistic feeling
-  const flipTimerRef = useRef<number>(0); 
+  const flipTimerRef = useRef<number>(0);
+  const spawnInitializedRef = useRef<boolean>(false); // Track if spawn initialization is complete
+  const resetCooldownRef = useRef<number>(0); // Cooldown timer for reset button
 
   useFrame((state, delta) => {
     if (!bodyRef.current || !meshRef.current) return;
     
     if (isLocal) {
+      // Robust spawn initialization - ensure physics body is awake and properly positioned
+      if (!spawnInitializedRef.current) {
+        // Wake up the physics body
+        bodyRef.current.wakeUp();
+        
+        // Ensure proper spawn position (slightly elevated to prevent ground clipping)
+        bodyRef.current.setTranslation({ 
+          x: initialPosition[0], 
+          y: initialPosition[1] + 0.5, // Add small buffer above spawn point
+          z: initialPosition[2] 
+        }, true);
+        
+        // Set rotation
+        bodyRef.current.setRotation({ 
+          x: initialRotation[0], 
+          y: initialRotation[1], 
+          z: initialRotation[2], 
+          w: initialRotation[3] 
+        }, true);
+        
+        // Clear any residual velocities
+        bodyRef.current.setLinvel({ x: 0, y: 0, z: 0 }, true);
+        bodyRef.current.setAngvel({ x: 0, y: 0, z: 0 }, true);
+        
+        // Apply small downward impulse to settle on ground
+        bodyRef.current.applyImpulse({ x: 0, y: -100, z: 0 }, true);
+        
+        spawnInitializedRef.current = true;
+      }
+      
       const keys = getKeys();
       const currentVel = bodyRef.current.linvel();
       const currentRot = bodyRef.current.rotation();
@@ -80,11 +112,16 @@ export function Car({ isLocal, id, initialPosition, initialRotation, color }: { 
       const pos = bodyRef.current.translation();
       const mass = 1200;
 
+      // Model-specific ground detection - i20 needs longer raycast due to elevation
+      const isI20Model = carModel.includes('hyundai') || carModel.includes('i20');
+      const rayStartHeight = isI20Model ? 1.5 : 0.5;
+      const rayDistance = isI20Model ? 3.0 : 1.5;
+      
       // Robust Ground Raycast Check
-      const rayorigin = { x: pos.x, y: pos.y + 0.5, z: pos.z }; 
+      const rayorigin = { x: pos.x, y: pos.y + rayStartHeight, z: pos.z }; 
       const raydir = { x: 0, y: -1, z: 0 };
       const ray = new rapier.Ray(rayorigin, raydir);
-      const hit = world.castRay(ray, 1.5, true); 
+      const hit = world.castRay(ray, rayDistance, true); 
       const isGrounded = _up.y > 0.1 && hit !== null; 
 
       _currentVelVec.set(currentVel.x, currentVel.y, currentVel.z);
@@ -169,22 +206,53 @@ export function Car({ isLocal, id, initialPosition, initialRotation, color }: { 
       }
       const isStuck = flipTimerRef.current > 1.5;
 
-      // Manual Reset (R key)
-      if (keys.reset) {
+      // Decrease reset cooldown
+      if (resetCooldownRef.current > 0) {
+        resetCooldownRef.current -= delta;
+      }
+
+      // Manual Reset (R key) with cooldown to prevent spam
+      if (keys.reset && resetCooldownRef.current <= 0) {
          // Determine if we are out of the arena bounds or fallen into the void
          const outOfBounds = pos.y < -5 || Math.abs(pos.x) > 1000 || Math.abs(pos.z) > 1000;
          
-         const safeX = outOfBounds ? initialPosition[0] : pos.x;
-         const safeY = outOfBounds ? initialPosition[1] : pos.y + 3; // Pop up slightly
-         const safeZ = outOfBounds ? initialPosition[2] : pos.z;
+         let safeX, safeY, safeZ;
+         
+         if (outOfBounds) {
+            // Respawn at initial position if out of bounds
+            safeX = initialPosition[0];
+            safeY = initialPosition[1];
+            safeZ = initialPosition[2];
+         } else {
+            // Find ground height using raycast - create new Ray to avoid aliasing
+            const resetRayOrigin = { x: pos.x, y: pos.y + 10, z: pos.z };
+            const resetRayDir = { x: 0, y: -1, z: 0 };
+            const resetRay = new rapier.Ray(resetRayOrigin, resetRayDir);
+            const groundHit = world.castRay(resetRay, 50, true);
+            
+            safeX = pos.x;
+            safeZ = pos.z;
+            
+            if (groundHit) {
+               // Lift car 2 units above detected ground
+               const groundY = (pos.y + 10) - groundHit.timeOfImpact;
+               safeY = groundY + 2.0;
+            } else {
+               // Fallback if no ground detected
+               safeY = pos.y + 2.0;
+            }
+         }
 
-         // Respawn slightly higher and upright instantly in place
+         // Respawn at calculated height and upright
          bodyRef.current.setTranslation({ x: safeX, y: safeY, z: safeZ }, true);
          bodyRef.current.setRotation({ x: initialRotation[0], y: initialRotation[1], z: initialRotation[2], w: initialRotation[3] }, true);
          bodyRef.current.setLinvel({ x: 0, y: 0, z: 0 }, true);
          bodyRef.current.setAngvel({ x: 0, y: 0, z: 0 }, true);
          flipTimerRef.current = 0;
          gearRef.current = 1;
+
+         // Set cooldown to 2 seconds to prevent spam
+         resetCooldownRef.current = 2.0;
 
          useStore.getState().updatePlayer(id, { 
             speed: 0, gear: 1, rpm: IDLE_RPM, isStuck: false 
@@ -201,7 +269,7 @@ export function Car({ isLocal, id, initialPosition, initialRotation, color }: { 
       }
       
       if (requestedNitro && !nitroCooldownRef.current && nitroLevelRef.current > 0) {
-          nitroLevelRef.current = Math.max(0, nitroLevelRef.current - (30 * delta)); // Drain boost
+          nitroLevelRef.current = Math.max(0, nitroLevelRef.current - (CONSTANTS.NITRO_DRAIN_RATE * delta));
           if (nitroLevelRef.current === 0) {
               nitroCooldownRef.current = true; // Exhausted! Must release shift to reset.
               requestedNitro = false;
@@ -210,7 +278,7 @@ export function Car({ isLocal, id, initialPosition, initialRotation, color }: { 
           requestedNitro = false; // Kill boost if we ran out or are in cooldown!
           // Only recharge if we aren't holding the button at all (forcing release to recharge)
           if (!keys.nitro) {
-              nitroLevelRef.current = Math.min(100, nitroLevelRef.current + (15 * delta)); // Recharges fully in ~6.6 seconds
+              nitroLevelRef.current = Math.min(100, nitroLevelRef.current + (CONSTANTS.NITRO_RECHARGE_RATE * delta));
           }
       }
       const isNitro = requestedNitro;
@@ -234,12 +302,14 @@ export function Car({ isLocal, id, initialPosition, initialRotation, color }: { 
       }
 
       // --- Acceleration & Braking ---
-      // Nitro pushes top speed from 90 to 110 (Not an insane jump)
-      const currentMaxSpeed = isNitro ? MAX_SPEED + 20 : MAX_SPEED; 
+      // Nitro gives a very subtle boost - not a big advantage
+      const currentMaxSpeed = isNitro ? MAX_SPEED + CONSTANTS.NITRO_SPEED_BONUS : MAX_SPEED; 
       
-      const torqueMultiplier = 1.0;
-      // Nitro boosts acceleration power by 70% instead of 400%
-      let currentAccel = (isNitro ? ACCELERATION * 1.7 : ACCELERATION) * torqueMultiplier;
+      // i20 needs extra power to compensate for higher damping and elevation
+      const i20PowerBoost = isI20Model ? 1.3 : 1.0;
+      const torqueMultiplier = 1.0 * i20PowerBoost;
+      // Nitro boosts acceleration by 15% - subtle tactical advantage
+      let currentAccel = (isNitro ? ACCELERATION * CONSTANTS.NITRO_BOOST : ACCELERATION) * torqueMultiplier;
       
       // Use actual forward direction for inclines, but flatten for top speed calculation
       _flatForward.copy(_forward);
@@ -250,10 +320,10 @@ export function Car({ isLocal, id, initialPosition, initialRotation, color }: { 
       const flatVelocity = new THREE.Vector3(currentVel.x, 0, currentVel.z);
       const flatSpeed = flatVelocity.length();
       
-      // Smoothly limit top engine speed based on flat speed (not total speed)
-      if (flatSpeed > currentMaxSpeed * 0.95) {
-          const overSpeed = flatSpeed - (currentMaxSpeed * 0.95);
-          const fade = Math.max(0, 1.0 - (overSpeed / (currentMaxSpeed * 0.05)));
+      // More lenient speed limiter - only kicks in very close to max speed
+      if (flatSpeed > currentMaxSpeed * 0.98) {
+          const overSpeed = flatSpeed - (currentMaxSpeed * 0.98);
+          const fade = Math.max(0, 1.0 - (overSpeed / (currentMaxSpeed * 0.02)));
           currentAccel *= fade;
       }
 
@@ -261,12 +331,13 @@ export function Car({ isLocal, id, initialPosition, initialRotation, color }: { 
          // Aggressive incline compensation for climbing steep roads
          const inclineAngle = Math.asin(Math.max(-1, Math.min(1, -_forward.y)));
          
-         // Exponential boost on inclines (much more aggressive)
-         // Flat: 1.0x, 30°: 2.5x, 45°: 4.0x, 60°: 6.0x
-         const inclineBoost = 1.0 + Math.max(0, Math.pow(Math.abs(inclineAngle) * 3.5, 1.3));
+         // Much more aggressive slope boost
+         // Flat: 1.0x, 30°: 3.5x, 45°: 6.0x, 60°: 10.0x
+         const baseInclineBoost = 1.0 + Math.max(0, Math.pow(Math.abs(inclineAngle) * 4.5, 1.5));
+         const inclineBoost = isI20Model ? baseInclineBoost * 1.2 : baseInclineBoost;
          
-         // Also add direct anti-gravity force on steep inclines
-         const gravityCompensation = Math.max(0, inclineAngle) * mass * 30 * delta;
+         // Massive anti-gravity force on slopes
+         const gravityCompensation = Math.max(0, inclineAngle) * mass * (isI20Model ? 60 : 50) * delta;
          
          _counterForce.copy(_forward).multiplyScalar(currentAccel * mass * inclineBoost * delta);
          _counterForce.y += gravityCompensation; // Direct upward push on inclines
@@ -303,6 +374,19 @@ export function Car({ isLocal, id, initialPosition, initialRotation, color }: { 
                 }, true);
             }
          }
+      }
+
+      // i20 Vertical Velocity Damping - Aggressively kill vertical bouncing from bumps
+      if (isI20Model && isGrounded) {
+        const verticalVel = currentVel.y;
+        // If car is bouncing up or down while grounded, heavily damp it
+        if (Math.abs(verticalVel) > 0.05) {
+          bodyRef.current.setLinvel({
+            x: currentVel.x,
+            y: verticalVel * 0.2, // Kill 80% of vertical velocity each frame
+            z: currentVel.z
+          }, true);
+        }
       }
 
       // --- Need for Speed Style Drift System ---
@@ -345,18 +429,18 @@ export function Car({ isLocal, id, initialPosition, initialRotation, color }: { 
          // Speed-Adaptive Drift Radius (NFS-style wide arcs at high speed)
          driftRadiusFactor = 0.7 + (speedRatio * 0.6); // Range: 0.7 to 1.3
          
-         // Stable grip model: predictable and consistent
-         const baseGrip = 0.06 + (1.0 - driftIntensity) * 0.06; // Range: 0.06 to 0.12
+         // Much more slippery grip model for natural handbrake feel
+         const baseGrip = 0.03 + (1.0 - driftIntensity) * 0.04; // Range: 0.03 to 0.07 (reduced from 0.06-0.12)
          currentGrip = baseGrip / driftRadiusFactor;
          
-         // Minimal speed loss during drift (NFS maintains momentum)
+         // Progressive speed loss during drift for more natural feel
          if (driftSpeed > 0.1) {
-            // Very gentle braking - keeps speed high
-            const baseBrake = 0.5 + (1.0 - speedRatio) * 1.0; // Range: 0.5 to 1.5
-            const angleFactor = angleRatio * 0.8; // Gentle angle penalty
+            // Progressive braking based on drift angle - more angle = more scrub
+            const baseBrake = 0.3 + (1.0 - speedRatio) * 0.6; // Range: 0.3 to 0.9 (reduced)
+            const angleFactor = angleRatio * 1.2; // More angle penalty for realism
             const driftBrake = baseBrake * (1.0 + angleFactor);
             
-            // Apply minimal drift resistance
+            // Apply drift resistance
             bodyRef.current.applyImpulse(_driftDir.multiplyScalar(-driftBrake * mass * delta), true);
          }
       } else if (absSidewaysVel > 4) {
@@ -376,8 +460,8 @@ export function Car({ isLocal, id, initialPosition, initialRotation, color }: { 
       
       // Apply counter impulse to sideways momentum
       if (isGrounded) {
-         // NFS-style grip: stable and predictable
-         const gripMultiplier = isInDrift ? 3.0 : 5.5;
+         // More slippery grip during handbrake
+         const gripMultiplier = isInDrift ? 2.0 : 5.5; // Reduced from 3.0 to 2.0 for more slip
          _counterForce.copy(_right).multiplyScalar(-sidewaysVelocity * mass * currentGrip * gripMultiplier * delta);
          
          // Advanced Drift Rotation with Natural Counter-Steering
@@ -552,7 +636,7 @@ export function Car({ isLocal, id, initialPosition, initialRotation, color }: { 
       );
       if (pState) pState.isDrifting = isDrifting; // Performant mutation
 
-      // --- Dynamic Smooth Camera ---
+      // --- Modern Racing Camera with Rotation Lag ---
       // (pos already requested at top of useFrame scope)
       
       // Void Fall & Out-Of-Bounds recovery mechanism
@@ -566,42 +650,58 @@ export function Car({ isLocal, id, initialPosition, initialRotation, color }: { 
         return;
       }
       
-      // Camera pulls back on higher speeds
+      // Modern camera system with rotation lag
       const speedFactor = Math.min(speed / MAX_SPEED, 1);
-      const cameraDist = 8 + (speedFactor * 4);
-      const cameraHeight = 3.0 + (speedFactor * 1.5);
       
+      // Camera distance and height scale with speed
+      const cameraDist = 10 + (speedFactor * 4);
+      const cameraHeight = 4.0 + (speedFactor * 1.5);
+      
+      // Calculate target camera position (directly behind car)
       _cameraOffset.set(0, cameraHeight, cameraDist).applyQuaternion(_quaternion);
       _cameraTargetPos.set(pos.x, pos.y, pos.z).add(_cameraOffset);
       
-      // Frame-rate independent lerping for ultra smooth camera chase
-      // AAA Clever Trick: Decouple the Camera Y-Axis! Let X/Z follow tightly, but Y is heavily dampened. 
-      // The car can visually bump over uneven geometry beneath the camera, but the screen stays absolutely perfectly still in the air!
-      state.camera.position.x = THREE.MathUtils.lerp(state.camera.position.x, _cameraTargetPos.x, 20 * delta);
-      state.camera.position.z = THREE.MathUtils.lerp(state.camera.position.z, _cameraTargetPos.z, 20 * delta);
-      state.camera.position.y = THREE.MathUtils.lerp(state.camera.position.y, _cameraTargetPos.y, 5 * delta); // Eats the micro-bumps!
+      // Smooth camera position tracking
+      const positionLerp = 10 * delta;
+      const verticalLerp = 6 * delta;
       
-      // Add slight look-ahead based on velocity
-      _lookAtPos.set(pos.x, pos.y, pos.z).add(_forward.multiplyScalar(speedFactor * 8));
+      state.camera.position.x = THREE.MathUtils.lerp(state.camera.position.x, _cameraTargetPos.x, positionLerp);
+      state.camera.position.z = THREE.MathUtils.lerp(state.camera.position.z, _cameraTargetPos.z, positionLerp);
+      state.camera.position.y = THREE.MathUtils.lerp(state.camera.position.y, _cameraTargetPos.y, verticalLerp);
       
-      // Slerping camera look rotation with decoupled dampening for nausea-free visual smoothness
+      // Modern rotation lag system - camera rotation lags behind car rotation
+      // This reveals the side of the car during turns
+      const angVel = bodyRef.current.angvel();
+      const turnRate = Math.abs(angVel.y);
+      
+      // Adaptive rotation lag based on turn intensity
+      // Slower rotation = more lag = more side view
+      const baseLag = 0.15; // Base lag for smooth following
+      const turnLag = Math.min(turnRate * 0.8, 0.4); // Extra lag during sharp turns
+      const rotationLerp = Math.max(baseLag, turnLag);
+      
+      // Look-at target with smooth lag
+      const lookAheadDist = 3 + (speedFactor * 5);
+      _lookAtPos.set(pos.x, pos.y + 0.5, pos.z).add(_forward.clone().multiplyScalar(lookAheadDist));
+      
+      // Smooth camera rotation with lag effect
       state.camera.getWorldDirection(_currentTarget);
       _currentTarget.add(state.camera.position);
       
-      _currentTarget.x = THREE.MathUtils.lerp(_currentTarget.x, _lookAtPos.x, 20 * delta);
-      _currentTarget.z = THREE.MathUtils.lerp(_currentTarget.z, _lookAtPos.z, 20 * delta);
-      _currentTarget.y = THREE.MathUtils.lerp(_currentTarget.y, _lookAtPos.y, 5 * delta); // Stops screen rotating up/down over microscopic cracks
+      _currentTarget.x = THREE.MathUtils.lerp(_currentTarget.x, _lookAtPos.x, rotationLerp);
+      _currentTarget.z = THREE.MathUtils.lerp(_currentTarget.z, _lookAtPos.z, rotationLerp);
+      _currentTarget.y = THREE.MathUtils.lerp(_currentTarget.y, _lookAtPos.y, rotationLerp * 0.8);
       
       state.camera.lookAt(_currentTarget);
 
       const cam = state.camera as THREE.PerspectiveCamera;
       
-      // AAA FOV Trick: Pull the camera back massively when Nitro is active to emulate tunnel-vision without any expensive Post-Processing Shaders!
+      // Dynamic FOV for speed sensation
       const isNitroActive = useStore.getState().players[id]?.isNitro || false;
-      const targetFov = 60 + (speedFactor * 20) + (isNitroActive ? 30 : 0);
+      const targetFov = 65 + (speedFactor * 15) + (isNitroActive ? 25 : 0);
       
-      // Smoothly zoom in/out to prevent jolts
-      cam.fov = THREE.MathUtils.lerp(cam.fov, targetFov, (isNitroActive ? 5 : 2) * delta);
+      // Smooth FOV transitions
+      cam.fov = THREE.MathUtils.lerp(cam.fov, targetFov, (isNitroActive ? 4 : 2) * delta);
       cam.updateProjectionMatrix();
 
     } else {
@@ -619,22 +719,29 @@ export function Car({ isLocal, id, initialPosition, initialRotation, color }: { 
 
   const spawnRotEuler = new THREE.Euler().setFromQuaternion(new THREE.Quaternion(...initialRotation));
 
+  // Model-specific physics adjustments for elevated cars
+  const isI20 = carModel.includes('hyundai') || carModel.includes('i20');
+  const undercarriageHeight = isI20 ? 1.3 : 0.4; // Raise i20 undercarriage much higher
+  const mainHullHeight = isI20 ? 1.7 : 0.9; // Raise main hull to match
+  const linearDamping = isI20 ? 0.6 : 0.5; // Moderate damping - not too high to kill acceleration
+  const angularDamping = isI20 ? 10.0 : 6.0; // Maximum angular damping for stability
+
   if (isLocal) {
     return (
       <>
         {/* CCD (Continuous Collision Detection) is extremely expensive on Trimesh maps at high speeds! Completely disable it! */}
-        <RigidBody ref={bodyRef} position={initialPosition} rotation={[spawnRotEuler.x, spawnRotEuler.y, spawnRotEuler.z]} colliders={false} linearDamping={0.4} angularDamping={5.0} friction={0.1} restitution={0.2}>
+        <RigidBody ref={bodyRef} position={initialPosition} rotation={[spawnRotEuler.x, spawnRotEuler.y, spawnRotEuler.z]} colliders={false} linearDamping={linearDamping} angularDamping={angularDamping} friction={0.05} restitution={0.1}>
           {/* Raised Main Hull so flat collision edges NEVER randomly snag on jagged trimesh map triangles */}
-          <CuboidCollider args={[0.9, 0.4, 2.0]} position={[0, 0.9, 0]} mass={1200} friction={0.1} restitution={0.2} />
+          <CuboidCollider args={[0.9, 0.4, 2.0]} position={[0, mainHullHeight, 0]} mass={1200} friction={0.05} restitution={0.1} />
           {/* Upper roof physics box */}
-          <CuboidCollider args={[0.8, 0.3, 1.0]} position={[0, 1.5, -0.5]} mass={100} friction={0.1} restitution={0.2} />
+          <CuboidCollider args={[0.8, 0.3, 1.0]} position={[0, 1.5, -0.5]} mass={100} friction={0.05} restitution={0.1} />
           
           {/* 
             Frictionless Soap Bar Undercarriage: Replace 4 sphere wheels with a sleek continuous slider!
             Spheres can geometrically drop into the tiny microscopic cracks between 3D Map Triangles at high speeds. 
             A RoundCuboid glides flawlessly over them without snagging!
           */}
-          <RoundCuboidCollider args={[0.7, 0.1, 1.4, 0.25]} position={[0, 0.35, 0]} friction={0} restitution={0.0} />
+          <RoundCuboidCollider args={[0.7, 0.15, 1.4, 0.3]} position={[0, undercarriageHeight, 0]} friction={0} restitution={0.0} />
 
           <group ref={meshRef}>
              <CarMesh color={color} model={carModel} />
@@ -751,17 +858,42 @@ function LoadedCarModel({ model, color }: { model: string; color: string }) {
             
             let modified = false;
             const newMaterials = materials.map(m => {
-                if (!m.name) return m;
-                const name = m.name.toLowerCase();
+                // Handle materials without names - apply color to all unnamed materials
+                const name = m.name ? m.name.toLowerCase() : '';
+                
                 // Common keywords used by 3D artists to label the car's paint job
-                if (name.includes('paint') || name.includes('body') || name.includes('exterior') || name.includes('color') || name.includes('shell') || name.includes('car') || name.includes('metal') || name.includes('chassis')) {
+                // Extended list to catch more material naming conventions
+                const paintKeywords = [
+                  'paint', 'body', 'exterior', 'color', 'shell', 'car', 
+                  'metal', 'chassis', 'surface', 'finish', 'coat', 'panel',
+                  'hood', 'door', 'roof', 'fender', 'bumper', 'lambo',
+                  'material', 'base', 'main', 'primary', 'yellow', 'white'
+                ];
+                
+                // Exclude non-paintable parts
+                const excludeKeywords = [
+                  'glass', 'window', 'tire', 'wheel', 'rim', 'brake',
+                  'light', 'lamp', 'chrome', 'mirror', 'interior', 'seat',
+                  'dashboard', 'steering', 'exhaust', 'grill', 'grille',
+                  'logo', 'badge', 'emblem', 'decal', 'sticker', 'carbon'
+                ];
+                
+                const shouldPaint = (name === '' || paintKeywords.some(keyword => name.includes(keyword))) &&
+                                   !excludeKeywords.some(keyword => name.includes(keyword));
+                
+                if (shouldPaint) {
                     const newMat = (m as THREE.MeshStandardMaterial).clone();
+                    
+                    // Completely override the base color - don't mix with existing
                     newMat.color.set(color);
                     
-                    // Subtle emissive glow for natural bloom effect without oversaturation
-                    // Lower intensity creates realistic metallic paint appearance
-                    newMat.emissive.set(color);
-                    newMat.emissiveIntensity = 0.15;
+                    // Remove emissive to prevent color mixing with base yellow
+                    newMat.emissive.set(0x000000);
+                    newMat.emissiveIntensity = 0;
+                    
+                    // Ensure proper metalness and roughness for car paint
+                    newMat.metalness = 0.6;
+                    newMat.roughness = 0.3;
                     
                     modified = true;
                     return newMat;
@@ -805,6 +937,8 @@ function LoadedCarModel({ model, color }: { model: string; color: string }) {
      rotation = [0, Math.PI + Math.PI / 2, 0]; // Rotate anti-clockwise 90 degrees
   } else if (model.includes('toyota')) {
      position = [0, 0.6, 0]; // Raise the tall SUV
+  } else if (model.includes('hyundai') || model.includes('i20')) {
+     position = [0, 1.5, 0]; // Raise the Hyundai i20 significantly higher
   }
 
   return (

@@ -3,13 +3,17 @@
  * Tries local file first for development speed, falls back to R2 if not available
  */
 
-const R2_BASE_URL = import.meta.env.VITE_R2_BASE_URL || 'https://racing-game.YOUR_ACCOUNT.workers.dev';
+// Hardcoded R2 public URL for production deployment
+const R2_BASE_URL = 'https://pub-7fa6d731a60d4c07a4dcba1d906002be.r2.dev';
 const isDevelopment = import.meta.env.DEV;
 
 interface AssetConfig {
   localPath: string;
   r2Path: string;
 }
+
+// Cache resolved URLs to avoid repeated checks
+const urlCache = new Map<string, string>();
 
 /**
  * Load an asset with local-first strategy
@@ -18,23 +22,44 @@ interface AssetConfig {
  */
 export async function loadAssetWithFallback(config: AssetConfig): Promise<string> {
   const { localPath, r2Path } = config;
-
-  // In development, try local first
-  if (isDevelopment) {
-    try {
-      const response = await fetch(localPath, { method: 'HEAD' });
-      if (response.ok) {
-        console.log(`[AssetLoader] Using local asset: ${localPath}`);
-        return localPath;
-      }
-    } catch {
-      console.warn(`[AssetLoader] Local asset not found: ${localPath}, falling back to R2`);
-    }
+  
+  // Check cache first
+  const cacheKey = localPath + r2Path;
+  if (urlCache.has(cacheKey)) {
+    return urlCache.get(cacheKey)!;
   }
 
-  // Fall back to R2 (or use R2 directly in production)
+  // In development, always use local path (Vite dev server handles it)
+  if (isDevelopment) {
+    console.log(`[AssetLoader] ✓ Using local asset: ${localPath}`);
+    urlCache.set(cacheKey, localPath);
+    return localPath;
+  }
+
+  // In production, try local first, then fall back to R2
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 500);
+    
+    const response = await fetch(localPath, { 
+      method: 'HEAD',
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+    
+    if (response.ok) {
+      console.log(`[AssetLoader] ✓ Using local asset: ${localPath}`);
+      urlCache.set(cacheKey, localPath);
+      return localPath;
+    }
+  } catch {
+    console.warn(`[AssetLoader] ⚠ Local asset not available, using R2`);
+  }
+
+  // Fall back to R2 in production
   const r2Url = `${R2_BASE_URL}${r2Path}`;
-  console.log(`[AssetLoader] Using R2 asset: ${r2Url}`);
+  console.log(`[AssetLoader] → Using R2 asset: ${r2Url}`);
+  urlCache.set(cacheKey, r2Url);
   return r2Url;
 }
 
@@ -62,3 +87,11 @@ export const ASSETS = {
     r2Path: '/maps/cartoon_race_track_oval.glb',
   },
 } as const;
+
+// Preload critical assets immediately (only in browser)
+if (typeof window !== 'undefined') {
+  // Start loading track as soon as module loads
+  loadAssetWithFallback(ASSETS.TRACK_OVAL).catch(err => 
+    console.error('[AssetLoader] Failed to preload track:', err)
+  );
+}
