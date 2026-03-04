@@ -6,14 +6,20 @@ import { loadAssetWithFallback, ASSETS } from '../utils/assetLoader';
 
 export function Track() {
   const [trackUrl, setTrackUrl] = useState<string>(ASSETS.TRACK_OVAL.localPath);
+  const [isReady, setIsReady] = useState(false);
 
   // Load track URL with fallback strategy
   React.useEffect(() => {
     loadAssetWithFallback(ASSETS.TRACK_OVAL)
-      .then(setTrackUrl)
+      .then(url => {
+        setTrackUrl(url);
+        // Small delay to ensure model is loaded
+        setTimeout(() => setIsReady(true), 100);
+      })
       .catch(err => {
         console.error('[Track] Failed to load track:', err);
-        // Keep using local path as fallback
+        // Still mark as ready to show something
+        setTimeout(() => setIsReady(true), 100);
       });
   }, []);
 
@@ -50,20 +56,16 @@ export function Track() {
         }
 
         // Only explicitly drawn roads/terrain receive costly shadows
-        // Disabling castShadow completely for the track terrain frees up HUGE amounts of GPU texture memory!!
         mesh.receiveShadow = true;
         mesh.castShadow = false; 
-        
-        // Frustum culling optimization
         mesh.frustumCulled = true;
         
-        // Double side the materials ONLY where necessary (saves drawing 50,000 backfaces per frame)
+        // Double side the materials ONLY where necessary
         if (meshName.includes('track') || meshName.includes('road')) {
             if (mesh.material) {
               if (Array.isArray(mesh.material)) {
                  mesh.material.forEach(m => {
                    m.side = THREE.DoubleSide;
-                   // Optimize material for performance
                    if (m instanceof THREE.MeshStandardMaterial) {
                      m.needsUpdate = false;
                    }
@@ -84,11 +86,11 @@ export function Track() {
   }, [scene]);
 
   // Don't render if scene isn't ready
-  if (!clonedScene) return null;
+  if (!clonedScene || !isReady) return null;
 
   return (
     <group>
-      {/* Invisible Safety Catch Floor: Prevents cars from falling through the world endlessly if they glitch through a wall */}
+      {/* Invisible Safety Catch Floor */}
       <RigidBody type="fixed" colliders="cuboid" position={[0, -2, 0]} friction={0.8}>
         <mesh visible={false}>
           <boxGeometry args={[2000, 2, 2000]} />
@@ -96,10 +98,10 @@ export function Track() {
         </mesh>
       </RigidBody>
 
-      {/* Render the heavily optimized map natively - using hull instead of trimesh for MUCH faster physics */}
+      {/* Render the map with trimesh collider (more compatible than hull) */}
       <RigidBody 
         type="fixed" 
-        colliders="hull" 
+        colliders="trimesh" 
         friction={0.6} 
         restitution={0.1}
       >
@@ -109,7 +111,7 @@ export function Track() {
   );
 }
 
-// Preload track with fallback - start loading immediately
+// Preload track
 loadAssetWithFallback(ASSETS.TRACK_OVAL).then(url => {
   useGLTF.preload(url);
 }).catch(err => {

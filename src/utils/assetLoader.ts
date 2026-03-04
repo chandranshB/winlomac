@@ -86,12 +86,34 @@ export const ASSETS = {
     localPath: '/tracks/cartoon_race_track_oval.glb',
     r2Path: '/maps/cartoon_race_track_oval.glb',
   },
+  // Car models
+  TOYOTA_FORTUNER: {
+    localPath: '/models/toyota_fortuner_2021.glb',
+    r2Path: '/models/toyota_fortuner_2021.glb',
+  },
+  MARUTI_800: {
+    localPath: '/models/maruti_800_ac.glb',
+    r2Path: '/models/maruti_800_ac.glb',
+  },
+  HYUNDAI_I20: {
+    localPath: '/models/2022_hyundai_i20_n_line.glb',
+    r2Path: '/models/2022_hyundai_i20_n_line.glb',
+  },
 } as const;
 
 // Preload critical assets immediately (only in browser)
-if (typeof window !== 'undefined') {
-  // Start loading track as soon as module loads
-  loadAssetWithFallback(ASSETS.TRACK_OVAL).catch(err => 
-    console.error('[AssetLoader] Failed to preload track:', err)
-  );
+if (typeof window !== 'undefined' && !isDevelopment) {
+  // In production, start preloading from R2 immediately
+  console.log('[AssetLoader] Starting background asset preload...');
+  
+  Promise.all([
+    loadAssetWithFallback(ASSETS.TRACK_OVAL),
+    loadAssetWithFallback(ASSETS.TOYOTA_FORTUNER),
+    loadAssetWithFallback(ASSETS.MARUTI_800),
+    loadAssetWithFallback(ASSETS.HYUNDAI_I20),
+  ]).then(() => {
+    console.log('[AssetLoader] ✓ All critical assets preloaded');
+  }).catch(err => {
+    console.error('[AssetLoader] Failed to preload assets:', err);
+  });
 }
