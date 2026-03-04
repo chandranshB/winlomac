@@ -26,26 +26,35 @@ export class RPMSystemImpl implements RPMSystem {
       _isGrounded: boolean,
       isShifting: boolean
     ): number {
-      // Handle gear changes - instant RPM adjustment
+      // Handle gear changes with smooth rev matching
       if (isShifting) {
-        // Calculate RPM for new gear based on current speed
-        this._currentRPM = this.calculateRPMFromSpeed(speed, gear);
+        // Calculate RPM for new gear based on current speed with smooth transition
+        const targetRPM = this.calculateRPMFromSpeed(speed, gear);
+        // Blend current and target RPM for smoother gear changes
+        this._currentRPM = this._currentRPM * 0.3 + targetRPM * 0.7;
         return this._currentRPM;
       }
 
       // Calculate target RPM based on speed and gear
       const targetRPM = this.calculateTargetRPM(gear, speed, throttle);
 
-      // Smoothly interpolate towards target RPM
-      const rpmChangeRate = throttle > 0.1 ? 3000 : 1500; // RPM per second
+      // Adaptive RPM change rate for smoother response
+      // Faster response on throttle, slower on deceleration
+      const baseRate = throttle > 0.1 ? 3500 : 2000; // RPM per second (increased from 3000/1500)
+      // Add speed-dependent scaling for more realistic behavior
+      const speedFactor = 1.0 + Math.min(speed / 100, 0.5); // Up to 50% faster at high speeds
+      const rpmChangeRate = baseRate * speedFactor;
       const maxChange = rpmChangeRate * delta;
 
-      if (Math.abs(targetRPM - this._currentRPM) < maxChange) {
+      // Smooth interpolation with easing
+      const rpmDiff = targetRPM - this._currentRPM;
+      if (Math.abs(rpmDiff) < maxChange) {
         this._currentRPM = targetRPM;
-      } else if (targetRPM > this._currentRPM) {
-        this._currentRPM += maxChange;
       } else {
-        this._currentRPM -= maxChange;
+        // Apply easing for smoother transitions
+        const easingFactor = Math.min(Math.abs(rpmDiff) / 1000, 1.0); // Ease based on RPM difference
+        const actualChange = maxChange * (0.5 + easingFactor * 0.5); // 50-100% of max change
+        this._currentRPM += Math.sign(rpmDiff) * actualChange;
       }
 
       // Apply rev limiter

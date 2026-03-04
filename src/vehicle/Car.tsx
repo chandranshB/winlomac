@@ -1,25 +1,17 @@
-import { useRef } from 'react';
+import { useRef, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { useKeyboardControls, useGLTF } from '@react-three/drei';
 import { RigidBody, RapierRigidBody, CuboidCollider, useRapier } from '@react-three/rapier';
 import { useStore } from '../store/useStore';
 import * as THREE from 'three';
+import { PhysicsControllerImpl } from './physics/PhysicsController';
+import { BodyTiltSystemImpl } from './visual/BodyTiltSystem';
+import { defaultVehicleConfig } from './config/defaultVehicleConfig';
+import type { VehicleInput } from './types';
 
 useGLTF.preload('/models/lamborghini.glb');
 useGLTF.preload('/models/MazdaRX-7.glb');
 useGLTF.preload('/models/bmw_m3_e46.glb');
-
-// Game mechanic constants
-const MAX_SPEED = 120; // Massive top speed
-const ACCELERATION = 60; // Slower, more realistic acceleration speed
-const BRAKING = 200;
-const BASE_TURN_SPEED = 3.0;
-const GRIP = 0.95; // Higher = tighter turns, less drifting
-
-// Transmission Tuning (m/s)
-const GEAR_SPEEDS = [20, 40, 60, 80, 100, 120]; // 6 Gears properly spaced
-const IDLE_RPM = 1000;
-const REDLINE_RPM = 8000;
 
 export function Car({ isLocal, id, initialPosition, color }: { isLocal: boolean; id: string; initialPosition: [number, number, number]; color: string }) {
   const bodyRef = useRef<RapierRigidBody>(null);
@@ -34,30 +26,37 @@ export function Car({ isLocal, id, initialPosition, color }: { isLocal: boolean;
   // Real-time custom player car model property
   const carModel = useStore((state) => state.players[id]?.carModel || 'default');
 
-  // Engine & Transmission State
-  const gearRef = useRef<number>(1);
-  const rpmRef = useRef<number>(1000);
-  const shiftDelayRef = useRef<number>(0); // Transmission delay for realistic feeling
-  const flipTimerRef = useRef<number>(0); 
+  // Initialize physics controller and body tilt system (only once)
+  const physicsController = useMemo(() => new PhysicsControllerImpl(defaultVehicleConfig), []);
+  const bodyTiltSystem = useMemo(() => new BodyTiltSystemImpl(defaultVehicleConfig), []);
+  
+  // Flip timer for stuck detection
+  const flipTimerRef = useRef<number>(0);
+  
+  // Previous velocity for acceleration calculation
+  const prevVelocityRef = useRef({ x: 0, y: 0, z: 0 }); 
 
   useFrame((state, delta) => {
     if (!bodyRef.current || !meshRef.current) return;
     
     if (isLocal) {
+      // Set rigid body reference in physics controller (first frame)
+      const currentVelocity = physicsController.velocity;
+      if (typeof currentVelocity === 'object' && 'x' in currentVelocity && !currentVelocity.x && !currentVelocity.y && !currentVelocity.z) {
+        physicsController.setRigidBody(bodyRef.current);
+      }
+
       const keys = getKeys();
-      const currentVel = bodyRef.current.linvel();
       const currentRot = bodyRef.current.rotation();
       const quaternion = new THREE.Quaternion(currentRot.x, currentRot.y, currentRot.z, currentRot.w);
 
       const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(quaternion);
-      const right = new THREE.Vector3(1, 0, 0).applyQuaternion(quaternion);
       const up = new THREE.Vector3(0, 1, 0).applyQuaternion(quaternion);
       
       const pos = bodyRef.current.translation();
-      const mass = 1200;
 
       // Robust Ground Raycast Check
-      const rayorigin = { x: pos.x, y: pos.y, z: pos.z }; // start slightly under the car
+      const rayorigin = { x: pos.x, y: pos.y, z: pos.z };
       const raydir = { x: 0, y: -1, z: 0 };
       const ray = new rapier.Ray(rayorigin, raydir);
       const hit = world.castRay(ray, 1.5, true); 
@@ -65,82 +64,27 @@ export function Car({ isLocal, id, initialPosition, color }: { isLocal: boolean;
 
       // Arcade Gravity (Fixes floaty spaceship feeling)
       if (!isGrounded) {
-         // Pull the heavy massive frame powerfully down to the road while jumping!
-         bodyRef.current.applyImpulse({ x: 0, y: -150 * mass * delta, z: 0 }, true);
+         bodyRef.current.applyImpulse({ x: 0, y: -150 * defaultVehicleConfig.mass * delta, z: 0 }, true);
       }
 
-      const speed = new THREE.Vector3(currentVel.x, currentVel.y, currentVel.z).length();
-      const forwardSpeed = new THREE.Vector3(currentVel.x, currentVel.y, currentVel.z).dot(forward);
-      const absForwardSpeed = Math.abs(forwardSpeed);
+      // Prepare vehicle input for physics controller
+      const input: VehicleInput = {
+        throttle: keys.forward ? 1 : 0,
+        brake: keys.backward ? 1 : 0,
+        steering: keys.left ? -1 : (keys.right ? 1 : 0),
+        handbrake: keys.brake || false,
+        reset: keys.reset || false
+      };
 
-      // --- Transmission Logic (Auto Shifting) ---
-      let gear = gearRef.current;
-      let isShifting = false;
+      // Update physics controller (handles acceleration, drift, RPM, etc.)
+      physicsController.update(delta, input);
 
-      // Check if we are mid-shift
-      if (shiftDelayRef.current > 0) {
-          shiftDelayRef.current -= delta;
-          isShifting = true;
-      }
-      
-      if (!isShifting) {
-        if (forwardSpeed < -1 && !keys.forward) {
-          if (gear !== -1) { gear = -1; shiftDelayRef.current = 0.3; }
-        } else if (gear === -1 && (keys.forward || forwardSpeed >= -1)) {
-          gear = 1; shiftDelayRef.current = 0.2;
-        } else if (absForwardSpeed < 1 && !keys.forward && !keys.backward) {
-          if (gear !== 1) { gear = 1; shiftDelayRef.current = 0.1; }
-        } else if (gear > 0 && !keys.brake) { // HOLD GEAR WHEN DRIFTING!
-          // Upshift logic (Engine reaching redline powerband limit)
-          if (absForwardSpeed >= GEAR_SPEEDS[gear - 1] * 0.9 && gear < 6) {
-              gear++;
-              shiftDelayRef.current = 0.4; // 400ms simulated shift time
-          }
-          // Downshift logic with Hysteresis (Prevents rapid back-and-forth shifting)
-          else if (gear > 1 && absForwardSpeed < (gear === 2 ? 10 : GEAR_SPEEDS[gear - 2] * 0.75)) {
-              gear--;
-              shiftDelayRef.current = 0.3; // 300ms reliable downshift
-          }
-        }
-      }
-      gearRef.current = gear;
-
-      // --- RPM Calculation ---
-      let targetRpm = IDLE_RPM;
-      
-      if (!isGrounded && keys.forward) {
-         // Free-spin the engine quickly to redline when tires lose contact
-         targetRpm = REDLINE_RPM;
-      } else if (gear === -1) { // Reverse RPM
-         targetRpm = IDLE_RPM + (absForwardSpeed / 15) * (REDLINE_RPM - IDLE_RPM);
-         if (keys.backward) targetRpm += 500; // Engine load
-      } else { // Forward Gears RPM
-         const maxSpeedInGear = GEAR_SPEEDS[gear - 1]; 
-         
-         // In real life, RPM doesn't start at IDLE when you shift up. 
-         // RPM = (Speed / MaxSpeedForGear) * REDLINE_RPM
-         // We clamp the minimum RPM to IDLE_RPM to keep the engine running
-         const gearRatio = REDLINE_RPM / maxSpeedInGear;
-         targetRpm = Math.max(IDLE_RPM, absForwardSpeed * gearRatio);
-         
-         // Simulated engine load (revs jump a little higher when foot is on the gas)
-         if (keys.forward && targetRpm < REDLINE_RPM) {
-             targetRpm += 500; // Applying torque to drivetrain load
-         }
-      }
-
-      // Smooth RPM visually
-      if (isShifting) {
-          // RPM drops sharply simulating a clutch-in transmission shift!
-          rpmRef.current = THREE.MathUtils.lerp(rpmRef.current, IDLE_RPM + 1200, 16 * delta); 
-      } else if (keys.forward || keys.backward) {
-          // Rapid climb when accelerating (throttle open)
-          rpmRef.current = THREE.MathUtils.lerp(rpmRef.current, Math.min(targetRpm, REDLINE_RPM), 15 * delta); 
-      } else { 
-          // Idle drop (throttle closed)
-          rpmRef.current = THREE.MathUtils.lerp(rpmRef.current, IDLE_RPM, 6 * delta); 
-      }
-      const rpm = rpmRef.current;
+      // Get current state from physics controller
+      const speed = physicsController.speed;
+      const forwardSpeed = physicsController.forwardSpeed;
+      const rpm = physicsController.rpm.currentRPM;
+      const gear = physicsController.acceleration.currentGear;
+      const isDrifting = physicsController.drift.isDrifting;
 
       // Flip tracker (Upside down or heavily tilted and stuck)
       if (!isGrounded && speed < 2) {
@@ -156,7 +100,7 @@ export function Car({ isLocal, id, initialPosition, color }: { isLocal: boolean;
          const outOfBounds = pos.y < -5 || pos.x > 245 || pos.x < -245 || pos.z > 245 || pos.z < -245;
          
          const safeX = outOfBounds ? initialPosition[0] : pos.x;
-         const safeY = outOfBounds ? initialPosition[1] : pos.y + 3; // Pop up slightly
+         const safeY = outOfBounds ? initialPosition[1] : pos.y + 3;
          const safeZ = outOfBounds ? initialPosition[2] : pos.z;
 
          // Respawn slightly higher and upright instantly in place
@@ -165,129 +109,72 @@ export function Car({ isLocal, id, initialPosition, color }: { isLocal: boolean;
          bodyRef.current.setLinvel({ x: 0, y: 0, z: 0 }, true);
          bodyRef.current.setAngvel({ x: 0, y: 0, z: 0 }, true);
          flipTimerRef.current = 0;
-         gearRef.current = 1;
+         physicsController.reset();
 
          useStore.getState().updatePlayer(id, { 
-            speed: 0, gear: 1, rpm: IDLE_RPM, isStuck: false 
+            speed: 0, gear: 1, rpm: defaultVehicleConfig.engine.idleRPM, isStuck: false 
          });
          return;
       }
 
-      // Send telemetry to HUD
+      // Calculate acceleration for body tilt
+      const velocity = physicsController.velocity;
+      // Type guard to ensure velocity is an object with x, y, z properties
+      if (typeof velocity === 'object' && 'x' in velocity) {
+        const acceleration = {
+          x: (velocity.x - prevVelocityRef.current.x) / delta,
+          y: (velocity.y - prevVelocityRef.current.y) / delta,
+          z: (velocity.z - prevVelocityRef.current.z) / delta
+        };
+        prevVelocityRef.current = { x: velocity.x, y: velocity.y, z: velocity.z };
+
+        // Calculate lateral acceleration for body tilt
+        const right = new THREE.Vector3(1, 0, 0).applyQuaternion(quaternion);
+        const lateralAcceleration = acceleration.x * right.x + acceleration.y * right.y + acceleration.z * right.z;
+
+        // Update body tilt system
+        const bodyTilt = bodyTiltSystem.update(
+          delta,
+          { x: acceleration.x, y: acceleration.y, z: acceleration.z },
+          lateralAcceleration,
+          speed
+        );
+
+        // Apply body tilt to mesh (visual only, not physics)
+        meshRef.current.rotation.x = bodyTilt.pitch * (Math.PI / 180); // Convert degrees to radians
+        meshRef.current.rotation.z = bodyTilt.roll * (Math.PI / 180);
+
+        // Apply steering visual tilt (drift effect)
+        const driftTilt = (keys.brake && speed > 15) ? 0.12 : 0.05;
+        const turningMultiplier = Math.min(speed / 10, 1.0);
+        const steeringTilt = (keys.left ? driftTilt : (keys.right ? -driftTilt : 0)) * turningMultiplier;
+        meshRef.current.rotation.z += steeringTilt;
+      }
+
+      // Send telemetry and state to HUD and multiplayer
+      const gearDisplay: number | 'N' | 'R' = gear === -1 ? 'R' : gear;
       useStore.getState().updatePlayer(id, { 
-         speed: absForwardSpeed * 2.23694, 
-         gear: gear === -1 ? 'R' : gear,
+         position: [pos.x, pos.y, pos.z],
+         rotation: [currentRot.x, currentRot.y, currentRot.z, currentRot.w],
+         speed: Math.abs(forwardSpeed) * 2.23694, // Convert m/s to mph for display
+         gear: gearDisplay,
          rpm: rpm,
-         isStuck: isStuck
+         isStuck: isStuck,
+         isDrifting: isDrifting
       });
 
-      // --- Acceleration & Braking with Torque Curve ---
-      // (Mass extracted to higher scope)
-      
-      // Calculate realistic acceleration torque curve multiplier
-      let torqueMultiplier = 1.0;
-      if (rpm < 4000) torqueMultiplier = 0.5 + (rpm / 4000) * 0.5; // Build up power
-      else if (rpm < 7000) torqueMultiplier = 1.0; // Peak powerband
-      else torqueMultiplier = Math.max(0.6, 1.0 - ((rpm - 7000) / 1000) * 0.4); // Power drop off, but high enough to beat aerodynamic drag
-
-      // Reduced power during shifting (simulate smooth automatic clutch)
-      if (isShifting) {
-          torqueMultiplier = 0.1; // Minimal acceleration while shifting
-      } 
-      // Gentle re-engage
-      else if (shiftDelayRef.current <= 0 && shiftDelayRef.current > -0.1) {
-          if (keys.forward) torqueMultiplier *= 1.1; // Very gentle bump, no harsh snap
-          shiftDelayRef.current -= delta; // Push timer below -0.1 to end the jolt
-      }
-
-      if (isGrounded && keys.forward && forwardSpeed < MAX_SPEED && torqueMultiplier > 0) {
-         bodyRef.current.applyImpulse(forward.clone().multiplyScalar(ACCELERATION * mass * torqueMultiplier * delta), true);
-      }
-      
-      // Brakes and Reverse logic
-      if (isGrounded && keys.backward) {
-         if (forwardSpeed > 1) { // Forward momentum -> Hard Braking
-            bodyRef.current.applyImpulse(forward.clone().multiplyScalar(-BRAKING * mass * delta), true);
-         } else if (forwardSpeed > -20) { // Reverse gear (Capped at 20 m/s ~ 45mph)
-            // Reduced acceleration for reverse gear
-            bodyRef.current.applyImpulse(forward.clone().multiplyScalar(-ACCELERATION * mass * 0.3 * delta), true);
-         }
-      }
-
-      // Cancel out sideways velocity to simulate tire grip
-      const sidewaysVelocity = new THREE.Vector3(currentVel.x, 0, currentVel.z).dot(right);
-      
-      let currentGrip = GRIP;
-      if (keys.brake && speed > 10) {
-         currentGrip = 0.05; // Extremely slippery sideways (drift)
-         // Apply a braking friction to drift so it feels like tires scrubbing the pavement 
-         bodyRef.current.applyImpulse(new THREE.Vector3(currentVel.x, 0, currentVel.z).normalize().multiplyScalar(-30 * mass * delta), true);
-      } else if (Math.abs(sidewaysVelocity) > 5) {
-         currentGrip = 0.4; // Sliding naturally recovering
-      }
-      
-      // Apply counter impulse to sideways momentum relative to mass
-      if (isGrounded) {
-         const counterForce = right.clone().multiplyScalar(-sidewaysVelocity * mass * currentGrip * 5 * delta); 
-         bodyRef.current.applyImpulse(counterForce, true);
-      }
-
-      // --- Steering ---
-      // Steering should be affected by how fast we are going (can't turn much if still)
-      let turningMultiplier = Math.min(speed / 10, 1.0); 
-      // Reverse turning direction if going backwards
-      if (forwardSpeed < -0.1) turningMultiplier *= -1;
-
-      if (isGrounded && speed > 1) {
-        // Drifting adds a higher turn sensitivity
-        const turnStrength = BASE_TURN_SPEED * turningMultiplier * mass * (keys.brake ? 14 : 7) * delta;
-        
-        if (keys.left) bodyRef.current.applyTorqueImpulse({ x: 0, y: turnStrength, z: 0 }, true);
-        if (keys.right) bodyRef.current.applyTorqueImpulse({ x: 0, y: -turnStrength, z: 0 }, true);
-
-        // Auto counter-steering (stabilize the car from spinning out natively)
-        const angVel = bodyRef.current.angvel();
-        if (!keys.left && !keys.right) {
-            // Snap straight aggressively if letting go of steering
-            bodyRef.current.applyTorqueImpulse({ x: 0, y: -angVel.y * mass * 0.5 * delta, z: 0 }, true); 
-        } else if (keys.brake) {
-            // Apply slight counter-resistance while drifting so you don't overspin into a full 360 easily
-            bodyRef.current.applyTorqueImpulse({ x: 0, y: -angVel.y * mass * 0.3 * delta, z: 0 }, true); 
-        }
-      }
-      
-      // Fake visual tilt for drifting
-      const driftTilt = (keys.brake && speed > 15) ? 0.12 : 0.05;
-      meshRef.current.rotation.z = THREE.MathUtils.lerp(meshRef.current.rotation.z, (keys.left ? driftTilt : (keys.right ? -driftTilt : 0)) * turningMultiplier, 0.1);
-
-      // --- Particles ---
-      const isBurnout = isGrounded && speed < 5 && (
-         (keys.forward && keys.brake) || 
-         (keys.forward && keys.backward)
-      );
-
-      const isDrifting = isGrounded && (
-         (keys.brake && speed > 15) || 
-         isBurnout ||
-         (keys.forward && keys.brake && (keys.left || keys.right))
-      );
-      useStore.getState().updatePlayer(id, { isDrifting });
-
-      // --- Dynamic Smooth Camera ---
-      // (pos already requested at top of useFrame scope)
-      
       // Void Fall recovery mechanism
       if (pos.y < -15) {
         bodyRef.current.setTranslation({ x: initialPosition[0], y: initialPosition[1], z: initialPosition[2] }, true);
         bodyRef.current.setLinvel({ x: 0, y: 0, z: 0 }, true);
         bodyRef.current.setAngvel({ x: 0, y: 0, z: 0 }, true);
         bodyRef.current.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
-        gearRef.current = 1;
+        physicsController.reset();
         return;
       }
       
-      // Camera pulls back on higher speeds
-      const speedFactor = Math.min(speed / MAX_SPEED, 1);
+      // --- Dynamic Smooth Camera ---
+      const speedFactor = Math.min(speed / defaultVehicleConfig.maxSpeed, 1);
       const cameraDist = 8 + (speedFactor * 4);
       const cameraHeight = 3.0 + (speedFactor * 1.5);
       
@@ -308,19 +195,10 @@ export function Car({ isLocal, id, initialPosition, color }: { isLocal: boolean;
       currentTarget.lerp(lookAtPos, lerpFactor);
       state.camera.lookAt(currentTarget);
 
-      // FOV speed effect and Shifting Camera Jolt
+      // FOV speed effect
       const cam = state.camera as THREE.PerspectiveCamera;
-      let targetFov = 60 + (speedFactor * 20);
-      
-      // Simulating realistic gear-shift forward momentum lunging
-      if (isShifting) {
-          targetFov -= 6; // Camera compresses slightly forward as acceleration drops
-      } else if (shiftDelayRef.current <= 0 && shiftDelayRef.current > -0.2 && keys.forward) {
-          targetFov += 10; // Snap back aggressively when gear catches!
-      }
-
-      // Snappier FOV tracking allows for visceral momentum jolts
-      cam.fov = THREE.MathUtils.lerp(cam.fov, targetFov, isShifting ? 0.08 : 0.15);
+      const targetFov = 60 + (speedFactor * 20);
+      cam.fov = THREE.MathUtils.lerp(cam.fov, targetFov, 0.15);
       cam.updateProjectionMatrix();
 
     } else {
@@ -337,9 +215,10 @@ export function Car({ isLocal, id, initialPosition, color }: { isLocal: boolean;
   });
 
   if (isLocal) {
+    // Prepare telemetry for gauge display (now handled in Scene.tsx)
     return (
       <>
-        <RigidBody ref={bodyRef} position={initialPosition} colliders={false} ccd={true} linearDamping={0.4} angularDamping={5.0} friction={0.1} restitution={0.4}>
+        <RigidBody ref={bodyRef} position={initialPosition} colliders={false} ccd={true} linearDamping={0.4} angularDamping={2.5} friction={0.1} restitution={0.4}>
           {/* Explicit Physics Box (Half-extents of the main car hull) added friction and anti-bouncing properties explicitly */}
           <CuboidCollider args={[0.9, 0.4, 2.1]} position={[0, 0.5, 0]} mass={1200} friction={0.1} restitution={0.4} />
           <CuboidCollider args={[0.8, 0.3, 1.0]} position={[0, 1.1, -0.5]} mass={100} friction={0.1} restitution={0.4} />

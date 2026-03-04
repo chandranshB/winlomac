@@ -1,5 +1,6 @@
 import React from 'react';
-import { GaugeSystem, VehicleTelemetry } from '../types';
+import type { GaugeSystem, VehicleTelemetry } from '../types';
+import { GaugeDisplay } from './GaugeDisplay';
 
 export class GaugeSystemImpl implements GaugeSystem {
   private telemetry: VehicleTelemetry = {
@@ -10,12 +11,29 @@ export class GaugeSystemImpl implements GaugeSystem {
     isRevLimiting: false
   };
 
-  update(telemetry: VehicleTelemetry): void {
+  private lastUpdateTime = 0;
+  private readonly updateInterval: number; // ms
+
+  constructor(updateRate: number = 30) {
+    // 30 Hz minimum update rate = ~33.33ms interval
+    this.updateInterval = 1000 / updateRate;
+  }
+
+  update(telemetry: VehicleTelemetry, currentTime?: number): void {
+    // Use provided time or performance.now()
+    const now = currentTime ?? performance.now();
+    
+    // Throttle updates to save CPU
+    if (now - this.lastUpdateTime < this.updateInterval) {
+      return;
+    }
+    
+    this.lastUpdateTime = now;
     this.telemetry = telemetry;
   }
 
   render(): React.ReactNode {
-    // TODO: Implement gauge rendering
-    return null;
+    return <GaugeDisplay telemetry={this.telemetry} />;
   }
 }
+

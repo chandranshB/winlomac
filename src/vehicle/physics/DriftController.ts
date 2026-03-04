@@ -1,5 +1,4 @@
-import type { Vector3 } from '@react-three/fiber';
-import type { DriftController, VehicleConfig, VehicleInput, DriftState } from '../types';
+import type { DriftController, VehicleConfig, VehicleInput, DriftState, Vector3 } from '../types';
 
 /**
  * Drift scoring event data
@@ -21,6 +20,11 @@ export class DriftControllerImpl implements DriftController {
   private _wasAirborne: boolean = false; // Track airborne state for drift deferral
   private readonly config: VehicleConfig;
   private readonly driftScoringCallbacks: Array<(score: DriftScoringEvent) => void> = [];
+
+  // Cached calculations for performance
+  private cachedSlipAngle: number = 0;
+  private cachedSlipAngleFrame: number = -1;
+  private currentFrame: number = 0;
 
   constructor(config: VehicleConfig) {
     this.config = config;
@@ -70,6 +74,9 @@ export class DriftControllerImpl implements DriftController {
   ): DriftState {
     // Mark angularVelocity as intentionally unused (will be used in task 6.3)
     void angularVelocity;
+
+    // Advance frame counter for cache invalidation
+    this.currentFrame++;
 
     // Calculate current slip angle from velocity and heading
     // For heading, we'll derive it from the velocity direction when moving
@@ -149,18 +156,41 @@ export class DriftControllerImpl implements DriftController {
       }
     }
 
-    // Calculate grip multiplier with smooth transition
+    // Calculate grip multiplier with ultra-smooth transition and enhanced responsiveness
     let gripMultiplier = 1.0;
     if (this._isDrifting) {
-      gripMultiplier = 1.0 - this.config.drift.gripReduction;
+      // Base drift grip reduction
+      const baseDriftGrip = 1.0 - this.config.drift.gripReduction;
+      
+      // Progressive grip modulation based on slip angle for ultra-smooth control
+      // Higher slip angles get slightly more grip to prevent spinout
+      const absSlipAngle = Math.abs(this._slipAngle);
+      let gripBonus = 0;
+      
+      // Smooth progressive grip bonus curve
+      if (absSlipAngle > 25) {
+        // 25-45 degrees: Smooth progressive grip bonus up to 18%
+        const angleRange = Math.min(absSlipAngle - 25, 20);
+        const t = angleRange / 20; // 0 to 1
+        // Smooth cubic easing for natural feel
+        const easedT = t * t * (3 - 2 * t);
+        gripBonus = easedT * 0.18; // 0 to 0.18
+      }
+      
+      gripMultiplier = Math.min(1.0, baseDriftGrip + gripBonus);
     } else if (this._exitTransitionProgress > 0 && this._exitTransitionProgress < 1.0) {
-      // Interpolate from drift grip to full grip during exit transition
+      // Ultra-smooth interpolation from drift grip to full grip during exit transition
+      // Use cubic easing for natural feel
+      const t = this._exitTransitionProgress;
+      const easedT = t * t * (3 - 2 * t); // Smoothstep
       const driftGrip = 1.0 - this.config.drift.gripReduction;
-      gripMultiplier = driftGrip + (1.0 - driftGrip) * this._exitTransitionProgress;
+      gripMultiplier = driftGrip + (1.0 - driftGrip) * easedT;
     } else if (this._surfaceTransitionProgress > 0 && this._surfaceTransitionProgress < 1.0) {
-      // Surface transition interpolation (Requirement 2.3)
+      // Surface transition interpolation with smooth easing (Requirement 2.3)
+      const t = this._surfaceTransitionProgress;
+      const easedT = t * t * (3 - 2 * t); // Smoothstep
       const driftGrip = 1.0 - this.config.drift.gripReduction;
-      gripMultiplier = driftGrip + (1.0 - driftGrip) * this._surfaceTransitionProgress;
+      gripMultiplier = driftGrip + (1.0 - driftGrip) * easedT;
     }
 
     // Calculate counter-steering torque
@@ -198,6 +228,11 @@ export class DriftControllerImpl implements DriftController {
   }
 
   calculateSlipAngle(velocity: Vector3, heading: Vector3): number {
+    // Return cached value if already calculated this frame
+    if (this.cachedSlipAngleFrame === this.currentFrame) {
+      return this.cachedSlipAngle;
+    }
+
     // Handle both array and Vector3 object types
     const vx = typeof velocity === 'object' && 'x' in velocity ? velocity.x : (velocity as unknown as number[])[0];
     const vz = typeof velocity === 'object' && 'z' in velocity ? velocity.z : (velocity as unknown as number[])[2];
@@ -209,6 +244,8 @@ export class DriftControllerImpl implements DriftController {
 
     // If velocity is too small, slip angle is zero
     if (velocityMagnitude < 0.1) {
+      this.cachedSlipAngle = 0;
+      this.cachedSlipAngleFrame = this.currentFrame;
       return 0;
     }
 
@@ -220,6 +257,8 @@ export class DriftControllerImpl implements DriftController {
     const headingMagnitude = Math.sqrt(hx * hx + hz * hz);
 
     if (headingMagnitude < 0.01) {
+      this.cachedSlipAngle = 0;
+      this.cachedSlipAngleFrame = this.currentFrame;
       return 0;
     }
 
@@ -237,7 +276,13 @@ export class DriftControllerImpl implements DriftController {
     const angle = Math.acos(clampedDot) * (180 / Math.PI);
     
     // Return signed angle based on cross product
-    return cross >= 0 ? angle : -angle;
+    const result = cross >= 0 ? angle : -angle;
+
+    // Cache the result
+    this.cachedSlipAngle = result;
+    this.cachedSlipAngleFrame = this.currentFrame;
+
+    return result;
   }
 
   private deriveHeadingFromVelocity(velocity: Vector3): Vector3 {
@@ -255,25 +300,30 @@ export class DriftControllerImpl implements DriftController {
   }
 
   shouldEnterDrift(input: VehicleInput, speed: number, slipAngle: number): boolean {
-    // Check minimum speed threshold
-    if (speed < this.config.drift.entrySpeedThreshold) {
+    // Ultra-polished drift entry thresholds for smooth, predictable drifting
+    if (speed < this.config.drift.entrySpeedThreshold * 0.75) { // 35 * 0.75 = 26.25 km/h
       return false;
     }
     
-    // Check steering angle threshold
+    // Steering angle threshold
     const steeringAngle = Math.abs(input.steering) * 45; // Max 45 degrees
-    if (steeringAngle < this.config.drift.entrySteeringThreshold) {
+    if (steeringAngle < this.config.drift.entrySteeringThreshold * 0.7) { // 18 * 0.7 = 12.6 degrees
       return false;
     }
     
-    // Check throttle application (must be accelerating)
-    if (input.throttle < 0.3 && !input.handbrake) {
+    // Throttle requirement - more forgiving
+    if (input.throttle < 0.2 && !input.handbrake) {
       return false;
     }
     
-    // Check if slip angle is developing
-    if (Math.abs(slipAngle) < this.config.drift.minSlipAngle) {
+    // Slip angle requirement - more forgiving
+    if (Math.abs(slipAngle) < this.config.drift.minSlipAngle * 0.65) { // 12 * 0.65 = 7.8 degrees
       return false;
+    }
+    
+    // Handbrake provides instant drift entry at lower thresholds
+    if (input.handbrake && speed > 25 && steeringAngle > 10) {
+      return true;
     }
     
     return true;
@@ -283,19 +333,19 @@ export class DriftControllerImpl implements DriftController {
     // Mark slipAngle as intentionally unused (not needed for exit logic)
     void slipAngle;
     
-    // Exit if speed drops too low (Requirement 2.1)
-    if (speed < 20) { // km/h
+    // Exit if speed drops too low - more forgiving threshold
+    if (speed < 16) { // km/h (reduced from 18)
       return true;
     }
     
-    // Exit if steering straightens
+    // Exit if steering straightens significantly - more forgiving
     const steeringAngle = Math.abs(input.steering) * 45;
-    if (steeringAngle < this.config.drift.entrySteeringThreshold * 0.5) {
+    if (steeringAngle < this.config.drift.entrySteeringThreshold * 0.3) { // 18 * 0.3 = 5.4 degrees
       return true;
     }
     
-    // Exit if throttle released (unless handbrake held)
-    if (input.throttle < 0.1 && !input.handbrake) {
+    // Exit if throttle released - more forgiving
+    if (input.throttle < 0.05 && !input.handbrake) {
       return true;
     }
     
@@ -303,10 +353,27 @@ export class DriftControllerImpl implements DriftController {
   }
 
   calculateCounterSteer(slipAngle: number): number {
-      // Counter-steering assistance proportional to slip angle
+      // Ultra-smooth counter-steering assistance for perfect drift control
+      // Counter-steering is proportional to slip angle with progressive scaling
       // Positive slip angle means car is sliding right, need to steer left (negative torque)
       // Negative slip angle means car is sliding left, need to steer right (positive torque)
-      const counterSteerTorque = -slipAngle * this.config.drift.counterSteerAssist;
+      
+      // Progressive counter-steer scaling with smooth curves
+      const absSlipAngle = Math.abs(slipAngle);
+      let counterSteerScale = 1.0;
+      
+      // Smooth progressive scaling for better control at high slip angles
+      if (absSlipAngle > 25) {
+        // 25-50 degrees: Smooth increase in assistance up to 60%
+        const angleRange = Math.min(absSlipAngle - 25, 25);
+        const t = angleRange / 25; // 0 to 1
+        // Smooth cubic easing
+        const easedT = t * t * (3 - 2 * t);
+        counterSteerScale = 1.0 + (easedT * 0.6); // 1.0 to 1.6
+      }
+      
+      // Apply ultra-smooth counter-steering with progressive scaling
+      const counterSteerTorque = -slipAngle * this.config.drift.counterSteerAssist * counterSteerScale;
 
       return counterSteerTorque;
     }

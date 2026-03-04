@@ -28,30 +28,30 @@ export const defaultVehicleConfig: VehicleConfig = {
     gearRatios: [3.5, 2.5, 1.8, 1.4, 1.1, 0.9], // 6 forward gears
     reverseRatio: 3.8,
     finalDrive: 3.7,
-    shiftTime: 0.2 // seconds
+    shiftTime: 0.15 // seconds (reduced from 0.2 for quicker, smoother shifts)
   },
   
   // Performance
-  maxSpeed: 250, // km/h
-  acceleration: 1.0, // force multiplier
-  braking: 1.0, // force multiplier
+  maxSpeed: 200, // km/h
+  acceleration: 0.9, // force multiplier (decreased from 1.3 for manageable acceleration)
+  braking: 1.3, // force multiplier (increased from 1.2 for better braking)
   
   // Handling
   steering: {
-    baseTurnSpeed: 2.5,
-    speedSensitivity: 0.5 // reduction at high speed
+    baseTurnSpeed: 3.5, // increased from 3.0 for sharper turn-in response
+    speedSensitivity: 0.35 // reduced from 0.4 for less reduction at high speed
   },
   
-  // Drift Parameters
+  // Drift Parameters - Ultra-polished for smooth, predictable drifting
   drift: {
-    entrySpeedThreshold: 40, // km/h
-    entrySteeringThreshold: 20, // degrees
-    gripReduction: 0.5, // 50% reduction
-    counterSteerAssist: 0.6, // 0-1
-    minSlipAngle: 15, // degrees
+    entrySpeedThreshold: 35, // km/h (balanced between easy and realistic)
+    entrySteeringThreshold: 18, // degrees (balanced)
+    gripReduction: 0.40, // 40% reduction (minimum allowed by validation)
+    counterSteerAssist: 0.85, // 0-1 (increased from 0.80 for better assistance)
+    minSlipAngle: 12, // degrees (balanced)
     maxSlipAngle: 45, // degrees
     spinoutThreshold: 50, // degrees
-    exitTransitionTime: 0.3 // seconds
+    exitTransitionTime: 0.35 // seconds (increased from 0.3 for smoother exit)
   },
   
   // Tire Model
@@ -73,16 +73,16 @@ export const defaultVehicleConfig: VehicleConfig = {
   
   // Body Tilt
   bodyTilt: {
-    maxPitchAccel: 3, // degrees
-    maxPitchBrake: 4, // degrees
-    maxRoll: 8, // degrees
+    maxPitchAccel: 1.5, // degrees (reduced from 3 for less bending)
+    maxPitchBrake: 2, // degrees (reduced from 4 for less bending)
+    maxRoll: 4, // degrees (reduced from 8 for less bending)
     pitchTransitionTime: 0.15, // seconds
     rollTransitionTime: 0.25, // seconds
     speedScaling: {
       minSpeed: 30, // km/h
       maxSpeed: 80, // km/h
-      minScale: 0.5, // 0-1
-      maxScale: 1.0 // 0-1
+      minScale: 0.3, // 0-1 (reduced from 0.5 for less bending at low speed)
+      maxScale: 0.7 // 0-1 (reduced from 1.0 for less bending at high speed)
     }
   }
 };

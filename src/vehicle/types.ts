@@ -1,4 +1,12 @@
-import type { Vector3, Quaternion } from '@react-three/fiber';
+import type { Quaternion } from '@react-three/fiber';
+
+// Define our own simple Vector3 interface to avoid conflicts with @react-three/fiber's complex union type
+// This is a plain data structure for physics calculations
+export interface Vector3 {
+  x: number;
+  y: number;
+  z: number;
+}
 
 // ============================================================================
 // Configuration Interfaces
@@ -282,7 +290,7 @@ export interface BodyTiltSystem {
 
 export interface GaugeSystem {
   // Methods
-  update(telemetry: VehicleTelemetry): void;
+  update(telemetry: VehicleTelemetry, currentTime?: number): void;
   render(): React.ReactNode;
 }
 

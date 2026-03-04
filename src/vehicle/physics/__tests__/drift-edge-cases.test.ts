@@ -1,8 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { DriftControllerImpl, type DriftScoringEvent } from '../DriftController';
 import { defaultVehicleConfig } from '../../config/defaultVehicleConfig';
-import type { VehicleInput } from '../../types';
-import type { Vector3 } from '@react-three/fiber';
+import type { VehicleInput, Vector3 } from '../../types';
 
 describe('DriftController - Edge Cases', () => {
   let driftController: DriftControllerImpl;
