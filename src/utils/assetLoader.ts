@@ -1,11 +1,17 @@
 /**
- * Asset loader with local fallback to R2 storage
- * Tries local file first for development speed, falls back to R2 if not available
+ * Asset loader with R2 storage for production
+ * In development: uses local files from /public
+ * In production: always uses R2 (files are NOT deployed)
  */
 
 // Hardcoded R2 public URL for production deployment
 const R2_BASE_URL = 'https://pub-7fa6d731a60d4c07a4dcba1d906002be.r2.dev';
-const isDevelopment = import.meta.env.DEV;
+
+// Detect if we're in development (localhost or dev server)
+const isDevelopment = import.meta.env.DEV || 
+                      (typeof window !== 'undefined' && 
+                       (window.location.hostname === 'localhost' || 
+                        window.location.hostname === '127.0.0.1'));
 
 interface AssetConfig {
   localPath: string;
@@ -16,7 +22,7 @@ interface AssetConfig {
 const urlCache = new Map<string, string>();
 
 /**
- * Load an asset with local-first strategy
+ * Load an asset with local-first strategy in dev, R2-only in production
  * @param config Asset configuration with local and R2 paths
  * @returns URL to use for loading the asset
  */
@@ -29,16 +35,16 @@ export async function loadAssetWithFallback(config: AssetConfig): Promise<string
     return urlCache.get(cacheKey)!;
   }
 
-  // In development, always use local path (Vite dev server handles it)
+  // In development, use local path (Vite dev server handles it)
   if (isDevelopment) {
-    console.log(`[AssetLoader] ✓ Using local asset: ${localPath}`);
+    console.log(`[AssetLoader] 🔧 DEV: Using local asset: ${localPath}`);
     urlCache.set(cacheKey, localPath);
     return localPath;
   }
 
-  // In production, use R2 directly (files aren't deployed to Vercel)
+  // In production, ALWAYS use R2 (files are NOT deployed to Vercel)
   const r2Url = `${R2_BASE_URL}${r2Path}`;
-  console.log(`[AssetLoader] → Using R2 asset: ${r2Url}`);
+  console.log(`[AssetLoader] 🌐 PROD: Using R2 asset: ${r2Url}`);
   urlCache.set(cacheKey, r2Url);
   return r2Url;
 }
@@ -81,10 +87,10 @@ export const ASSETS = {
   },
 } as const;
 
-// Preload critical assets immediately (only in browser)
+// Preload critical assets immediately (only in browser and production)
 if (typeof window !== 'undefined' && !isDevelopment) {
   // In production, start preloading from R2 immediately
-  console.log('[AssetLoader] Starting background asset preload...');
+  console.log('[AssetLoader] 🚀 Starting background asset preload from R2...');
   
   Promise.all([
     loadAssetWithFallback(ASSETS.TRACK_OVAL),
@@ -92,8 +98,8 @@ if (typeof window !== 'undefined' && !isDevelopment) {
     loadAssetWithFallback(ASSETS.MARUTI_800),
     loadAssetWithFallback(ASSETS.HYUNDAI_I20),
   ]).then(() => {
-    console.log('[AssetLoader] ✓ All critical assets preloaded');
+    console.log('[AssetLoader] ✅ All critical assets preloaded from R2');
   }).catch(err => {
-    console.error('[AssetLoader] Failed to preload assets:', err);
+    console.error('[AssetLoader] ❌ Failed to preload assets:', err);
   });
 }

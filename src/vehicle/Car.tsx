@@ -840,7 +840,27 @@ function TireSmoke({ isDrifting, carBodyRef }: { isDrifting: boolean, carBodyRef
 
 // Separate component for hook-compliant GLTF dynamic loading
 function LoadedCarModel({ model, color }: { model: string; color: string }) {
-  const { scene } = useGLTF(model);
+  const [resolvedUrl, setResolvedUrl] = React.useState<string>(model);
+
+  // Resolve the model URL through asset loader
+  React.useEffect(() => {
+    // Check if this is a local path that needs R2 fallback
+    if (model.startsWith('/models/')) {
+      import('../utils/assetLoader').then(({ loadAssetWithFallback }) => {
+        loadAssetWithFallback({
+          localPath: model,
+          r2Path: model // Same path for R2
+        }).then(setResolvedUrl).catch(err => {
+          console.error('[Car] Failed to load model:', err);
+          setResolvedUrl(model); // Fallback to original
+        });
+      });
+    } else {
+      setResolvedUrl(model);
+    }
+  }, [model]);
+
+  const { scene } = useGLTF(resolvedUrl);
   
   // Massive optimization: Only execute the deep clone and material mapping ONCE when the component loads or the color changes!
   // Doing scene.clone(true) every frame/render on a 1MB+ high poly model ruins FPS completely!
