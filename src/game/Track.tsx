@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import { RigidBody } from '@react-three/rapier';
 import { useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
