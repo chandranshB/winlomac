@@ -1,17 +1,18 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { RigidBody } from '@react-three/rapier';
 import { useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
 import { loadAssetWithFallback, ASSETS } from '../utils/assetLoader';
 
 export function Track() {
-  const [trackUrl, setTrackUrl] = useState<string>(ASSETS.TRACK_OVAL.localPath);
+  const [trackUrl, setTrackUrl] = useState<string | null>(null);
   const [isReady, setIsReady] = useState(false);
 
   // Load track URL with fallback strategy
-  React.useEffect(() => {
+  useEffect(() => {
     loadAssetWithFallback(ASSETS.TRACK_OVAL)
       .then(url => {
+        console.log('[Track] Resolved URL:', url);
         setTrackUrl(url);
         // Small delay to ensure model is loaded
         setTimeout(() => setIsReady(true), 100);
@@ -23,6 +24,16 @@ export function Track() {
       });
   }, []);
 
+  // Don't render anything until we have the URL
+  if (!trackUrl) {
+    return null;
+  }
+
+  return <TrackMesh trackUrl={trackUrl} isReady={isReady} />;
+}
+
+// Separate component that uses the resolved URL
+function TrackMesh({ trackUrl, isReady }: { trackUrl: string; isReady: boolean }) {
   const { scene } = useGLTF(trackUrl);
 
   // Strip the invisible walls and complex heavy visual meshes from the physics array!
@@ -111,8 +122,9 @@ export function Track() {
   );
 }
 
-// Preload track
+// Preload track - resolve URL first, then preload
 loadAssetWithFallback(ASSETS.TRACK_OVAL).then(url => {
+  console.log('[Track] Preloading from:', url);
   useGLTF.preload(url);
 }).catch(err => {
   console.error('[Track] Failed to preload:', err);
