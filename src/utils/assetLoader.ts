@@ -36,27 +36,7 @@ export async function loadAssetWithFallback(config: AssetConfig): Promise<string
     return localPath;
   }
 
-  // In production, try local first, then fall back to R2
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 500);
-    
-    const response = await fetch(localPath, { 
-      method: 'HEAD',
-      signal: controller.signal
-    });
-    clearTimeout(timeoutId);
-    
-    if (response.ok) {
-      console.log(`[AssetLoader] ✓ Using local asset: ${localPath}`);
-      urlCache.set(cacheKey, localPath);
-      return localPath;
-    }
-  } catch {
-    console.warn(`[AssetLoader] ⚠ Local asset not available, using R2`);
-  }
-
-  // Fall back to R2 in production
+  // In production, use R2 directly (files aren't deployed to Vercel)
   const r2Url = `${R2_BASE_URL}${r2Path}`;
   console.log(`[AssetLoader] → Using R2 asset: ${r2Url}`);
   urlCache.set(cacheKey, r2Url);
