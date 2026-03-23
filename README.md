@@ -2,6 +2,8 @@
 
 A multiplayer 3D racing game built with React, Three.js, and Rapier physics.
 
+<iframe style="width:100%;height:auto;min-width:600px;min-height:400px;" src="https://www.star-history.com/?repos=chandranshB%2Fwinlomac&type=date&legend=top-left" frameBorder="0"></iframe>
+
 ## Features
 
 - Realistic car physics with drift mechanics
